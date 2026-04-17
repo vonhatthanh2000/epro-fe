@@ -3,6 +3,7 @@ import { Button } from './ui/button';
 import { Textarea } from './ui/textarea';
 import { motion } from 'motion/react';
 import { FileText, TrendingUp, Award, Target, Sparkles } from 'lucide-react';
+import { API_ROUTES, apiFetch, unwrapApiPayload } from '../../config/api';
 
 interface GradeAnalysis {
   score: number;
@@ -15,40 +16,58 @@ interface GradeAnalysis {
   style: number;
 }
 
+function parseGradeAnalysis(data: Record<string, unknown>): GradeAnalysis {
+  return {
+    score: Number(data.score ?? 0),
+    grade: String(data.grade ?? ''),
+    strengths: Array.isArray(data.strengths) ? data.strengths.map(String) : [],
+    weaknesses: Array.isArray(data.weaknesses) ? data.weaknesses.map(String) : [],
+    vocabulary: Number(data.vocabulary ?? data.vocabulary_score ?? 0),
+    grammar: Number(data.grammar ?? data.grammar_score ?? 0),
+    clarity: Number(data.clarity ?? data.clarity_score ?? 0),
+    style: Number(data.style ?? data.style_score ?? 0),
+  };
+}
+
 export function WritingGrade() {
   const [text, setText] = useState('');
   const [analysis, setAnalysis] = useState<GradeAnalysis | null>(null);
   const [isGrading, setIsGrading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const gradeWriting = async () => {
     if (!text.trim()) return;
 
     setIsGrading(true);
-    
-    // Simulate API call
-    await new Promise(resolve => setTimeout(resolve, 2000));
+    setError(null);
 
-    const mockAnalysis: GradeAnalysis = {
-      score: 85,
-      grade: 'B+',
-      strengths: [
-        'Clear and concise sentence structure',
-        'Good use of transitional phrases',
-        'Appropriate vocabulary for the context'
-      ],
-      weaknesses: [
-        'Some repetitive word choices',
-        'Could benefit from more varied sentence lengths',
-        'Minor punctuation inconsistencies'
-      ],
-      vocabulary: 82,
-      grammar: 90,
-      clarity: 88,
-      style: 80
-    };
-
-    setAnalysis(mockAnalysis);
-    setIsGrading(false);
+    try {
+      const res = await apiFetch(API_ROUTES.gradeWriting, {
+        method: 'POST',
+        body: JSON.stringify({ text: text.trim() }),
+      });
+      const bodyText = await res.text();
+      let json: unknown;
+      try {
+        json = bodyText ? JSON.parse(bodyText) : null;
+      } catch {
+        throw new Error(bodyText || 'Invalid JSON from server');
+      }
+      if (!res.ok) {
+        const msg =
+          json && typeof json === 'object' && 'message' in json
+            ? String((json as { message: unknown }).message)
+            : bodyText || res.statusText;
+        throw new Error(msg);
+      }
+      const payload = unwrapApiPayload(json) ?? (json as Record<string, unknown> | null);
+      if (!payload) throw new Error('Empty response from server');
+      setAnalysis(parseGradeAnalysis(payload));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Request failed');
+    } finally {
+      setIsGrading(false);
+    }
   };
 
   const getGradeColor = (grade: string) => {
@@ -87,6 +106,12 @@ export function WritingGrade() {
           className="min-h-[300px] rounded-xl border-2 border-gray-200 focus:border-pink-400 resize-none mb-4"
         />
         
+        {error && (
+          <p className="text-sm text-red-600 mb-3" role="alert">
+            {error}
+          </p>
+        )}
+
         <Button
           onClick={gradeWriting}
           disabled={!text.trim() || isGrading}

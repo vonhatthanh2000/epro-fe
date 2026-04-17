@@ -30,7 +30,9 @@ export function HomePage() {
               <h1 className="text-xl bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
                 EPro
               </h1>
-              <p className="text-xs text-muted-foreground">Welcome back, {user?.username}!</p>
+              <p className="text-xs text-muted-foreground">
+                Welcome back, {user?.name?.trim() || user?.username}!
+              </p>
             </div>
           </div>
           <Button

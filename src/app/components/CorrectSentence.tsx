@@ -3,6 +3,7 @@ import { Button } from './ui/button';
 import { Textarea } from './ui/textarea';
 import { motion, AnimatePresence } from 'motion/react';
 import { Send, CheckCircle, AlertCircle, Sparkles, History } from 'lucide-react';
+import { API_ROUTES, apiFetch, unwrapApiPayload } from '../../config/api';
 
 interface SentenceAnalysis {
   id: string;
@@ -11,6 +12,22 @@ interface SentenceAnalysis {
   mistakes: string[];
   improvements: string[];
   timestamp: Date;
+}
+
+function parseSentenceAnalysis(
+  data: Record<string, unknown>,
+  fallbackOriginal: string
+): SentenceAnalysis {
+  const mistakes = data.mistakes ?? data.errors;
+  const improvements = data.improvements ?? data.suggestions;
+  return {
+    id: String(data.id ?? Date.now()),
+    original: String(data.original ?? data.sentence ?? fallbackOriginal),
+    corrected: String(data.corrected ?? data.correct ?? ''),
+    mistakes: Array.isArray(mistakes) ? mistakes.map(String) : [],
+    improvements: Array.isArray(improvements) ? improvements.map(String) : [],
+    timestamp: new Date(),
+  };
 }
 
 export function CorrectSentence() {
@@ -46,35 +63,45 @@ export function CorrectSentence() {
   ]);
   const [selectedAnalysis, setSelectedAnalysis] = useState<SentenceAnalysis | null>(history[0]);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const analyzeSentence = async () => {
     if (!sentence.trim()) return;
 
     setIsAnalyzing(true);
-    
-    // Simulate API call
-    await new Promise(resolve => setTimeout(resolve, 1500));
+    setError(null);
 
-    const newAnalysis: SentenceAnalysis = {
-      id: Date.now().toString(),
-      original: sentence,
-      corrected: sentence.replace(/\bi\b/gi, 'I').replace(/\bdont\b/gi, "don't"),
-      mistakes: [
-        "Capitalization: 'i' should be capitalized as 'I'",
-        "Contraction: 'dont' should have an apostrophe: \"don't\""
-      ],
-      improvements: [
-        "Always capitalize the pronoun 'I'",
-        "Use proper punctuation in contractions",
-        "Consider adding more descriptive adjectives"
-      ],
-      timestamp: new Date()
-    };
+    try {
+      const res = await apiFetch(API_ROUTES.correctSentence, {
+        method: 'POST',
+        body: JSON.stringify({ sentence: sentence.trim() }),
+      });
+      const text = await res.text();
+      let json: unknown;
+      try {
+        json = text ? JSON.parse(text) : null;
+      } catch {
+        throw new Error(text || 'Invalid JSON from server');
+      }
+      if (!res.ok) {
+        const msg =
+          json && typeof json === 'object' && 'message' in json
+            ? String((json as { message: unknown }).message)
+            : text || res.statusText;
+        throw new Error(msg);
+      }
+      const payload = unwrapApiPayload(json) ?? (json as Record<string, unknown> | null);
+      if (!payload) throw new Error('Empty response from server');
 
-    setHistory([newAnalysis, ...history]);
-    setSelectedAnalysis(newAnalysis);
-    setSentence('');
-    setIsAnalyzing(false);
+      const newAnalysis = parseSentenceAnalysis(payload, sentence.trim());
+      setHistory((prev) => [newAnalysis, ...prev]);
+      setSelectedAnalysis(newAnalysis);
+      setSentence('');
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Request failed');
+    } finally {
+      setIsAnalyzing(false);
+    }
   };
 
   return (
@@ -101,6 +128,12 @@ export function CorrectSentence() {
             className="min-h-[120px] rounded-xl border-2 border-gray-200 focus:border-blue-400 resize-none mb-4"
           />
           
+          {error && (
+            <p className="text-sm text-red-600 mb-3" role="alert">
+              {error}
+            </p>
+          )}
+
           <Button
             onClick={analyzeSentence}
             disabled={!sentence.trim() || isAnalyzing}

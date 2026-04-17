@@ -10,6 +10,7 @@ import { BookOpen, Sparkles } from 'lucide-react';
 export function LoginPage() {
   const [isLogin, setIsLogin] = useState(true);
   const [usernameOrEmail, setUsernameOrEmail] = useState('');
+  const [name, setName] = useState('');
   const [username, setUsername] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -17,22 +18,26 @@ export function LoginPage() {
   const navigate = useNavigate();
   const { login, register } = useAuth();
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
 
-    if (isLogin) {
-      if (login(usernameOrEmail, password)) {
-        navigate('/home');
+    try {
+      if (isLogin) {
+        if (await login(usernameOrEmail, password)) {
+          navigate('/home');
+        } else {
+          setError('Invalid credentials');
+        }
       } else {
-        setError('Invalid credentials');
+        if (await register(name, username, email, password)) {
+          navigate('/home');
+        } else {
+          setError('Registration failed. Please fill all fields.');
+        }
       }
-    } else {
-      if (register(username, email, password)) {
-        navigate('/home');
-      } else {
-        setError('Registration failed. Please fill all fields.');
-      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Something went wrong');
     }
   };
 
@@ -106,6 +111,19 @@ export function LoginPage() {
               </div>
             ) : (
               <>
+                <div className="space-y-2">
+                  <Label htmlFor="name">Name</Label>
+                  <Input
+                    id="name"
+                    type="text"
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
+                    placeholder="Your full name"
+                    required
+                    autoComplete="name"
+                    className="rounded-xl border-2 border-gray-200 focus:border-blue-400 transition-colors"
+                  />
+                </div>
                 <div className="space-y-2">
                   <Label htmlFor="username">Username</Label>
                   <Input
