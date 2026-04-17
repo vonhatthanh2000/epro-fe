@@ -1,7 +1,15 @@
-import React, { createContext, useContext, useState, ReactNode } from 'react';
+import React, {
+  createContext,
+  useContext,
+  useState,
+  useEffect,
+  ReactNode,
+} from 'react';
 import {
   API_ROUTES,
+  apiFetch,
   apiFetchPublic,
+  getStoredToken,
   setStoredToken,
   unwrapApiPayload,
 } from '../../config/api';
@@ -15,6 +23,8 @@ interface User {
 
 interface AuthContextType {
   user: User | null;
+  /** True while loading `/users/me` on startup (when a token exists). */
+  isSessionLoading: boolean;
   login: (username: string, password: string) => Promise<boolean>;
   register: (name: string, username: string, email: string, password: string) => Promise<boolean>;
   logout: () => void;
@@ -30,8 +40,62 @@ function readAccessToken(json: unknown): string | null {
   return String(raw);
 }
 
+function mapMePayload(data: Record<string, unknown>): User {
+  const nameRaw = data.name ?? data.full_name;
+  const name =
+    nameRaw != null && String(nameRaw).trim() !== ''
+      ? String(nameRaw).trim()
+      : undefined;
+  return {
+    username: String(data.username ?? ''),
+    email: String(data.email ?? ''),
+    ...(name ? { name } : {}),
+  };
+}
+
+async function fetchCurrentUser(): Promise<User | null> {
+  const res = await apiFetch(API_ROUTES.me, { method: 'GET' });
+  if (!res.ok) return null;
+  let json: unknown;
+  try {
+    json = await res.json();
+  } catch {
+    return null;
+  }
+  const payload = unwrapApiPayload(json) ?? (json as Record<string, unknown> | null);
+  if (!payload || typeof payload !== 'object') return null;
+  return mapMePayload(payload as Record<string, unknown>);
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
+  const [isSessionLoading, setIsSessionLoading] = useState(() => Boolean(getStoredToken()));
+
+  useEffect(() => {
+    const token = getStoredToken();
+    if (!token) {
+      setIsSessionLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setIsSessionLoading(true);
+    fetchCurrentUser()
+      .then((me) => {
+        if (cancelled) return;
+        if (me) {
+          setUser(me);
+        } else {
+          setStoredToken(null);
+          setUser(null);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setIsSessionLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const login = async (usernameOrEmail: string, password: string) => {
     const res = await apiFetchPublic(API_ROUTES.login, {
@@ -59,18 +123,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
     setStoredToken(token);
 
-    const payload = unwrapApiPayload(json) ?? (json as Record<string, unknown>);
-    const userObj = payload.user;
-    if (userObj && typeof userObj === 'object') {
-      const u = userObj as Record<string, unknown>;
-      const displayName = u.name ?? u.full_name;
-      setUser({
-        username: String(u.username ?? usernameOrEmail),
-        email: String(u.email ?? (usernameOrEmail.includes('@') ? usernameOrEmail : `${usernameOrEmail}@example.com`)),
-        ...(displayName != null && String(displayName) !== ''
-          ? { name: String(displayName) }
-          : {}),
-      });
+    const me = await fetchCurrentUser();
+    if (me) {
+      setUser(me);
       return true;
     }
 
@@ -109,16 +164,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
     setStoredToken(token);
 
-    const payload = unwrapApiPayload(json) ?? (json as Record<string, unknown>);
-    const userObj = payload.user;
-    if (userObj && typeof userObj === 'object') {
-      const u = userObj as Record<string, unknown>;
-      const resolvedName = u.name ?? u.full_name ?? name;
-      setUser({
-        username: String(u.username ?? username),
-        email: String(u.email ?? email),
-        ...(resolvedName ? { name: String(resolvedName) } : {}),
-      });
+    const me = await fetchCurrentUser();
+    if (me) {
+      setUser(me);
       return true;
     }
 
@@ -136,7 +184,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   return (
-    <AuthContext.Provider value={{ user, login, register, logout }}>
+    <AuthContext.Provider
+      value={{ user, isSessionLoading, login, register, logout }}
+    >
       {children}
     </AuthContext.Provider>
   );

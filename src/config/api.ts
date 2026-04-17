@@ -4,9 +4,16 @@
 export const API_ROUTES = {
   login: '/auth/login',
   register: '/auth/register',
+  me: '/users/me',
   correctSentence: '/sentence/correct',
+  sentenceHistory: '/sentence/history',
   gradeWriting: '/writing/grade',
 } as const;
+
+/** GET one sentence analysis by id: `/sentence/{sentence_id}` */
+export function sentenceDetailPath(sentenceId: string): string {
+  return `/sentence/${encodeURIComponent(sentenceId)}`;
+}
 
 function trimTrailingSlashes(url: string): string {
   return url.replace(/\/+$/, '');

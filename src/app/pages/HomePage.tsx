@@ -9,7 +9,10 @@ import { useNavigate } from 'react-router';
 
 export function HomePage() {
   const [activeFeature, setActiveFeature] = useState<'sentence' | 'grade'>('sentence');
-  const { user, logout } = useAuth();
+  const { user, isSessionLoading, logout } = useAuth();
+
+  const welcomeName =
+    user?.name?.trim() || user?.username || (isSessionLoading ? '…' : 'there');
   const navigate = useNavigate();
 
   const handleLogout = () => {
@@ -31,7 +34,11 @@ export function HomePage() {
                 EPro
               </h1>
               <p className="text-xs text-muted-foreground">
-                Welcome back, {user?.name?.trim() || user?.username}!
+                Welcome back,{' '}
+                <span className="font-semibold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
+                  {welcomeName}
+                </span>
+                !
               </p>
             </div>
           </div>
