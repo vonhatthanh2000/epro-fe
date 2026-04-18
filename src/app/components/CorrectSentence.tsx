@@ -12,7 +12,14 @@ import {
   Lightbulb,
   ArrowRight,
 } from 'lucide-react';
-import { API_ROUTES, apiFetch, sentenceDetailPath, unwrapApiPayload } from '../../config/api';
+import {
+  API_ROUTES,
+  PROFILE_ID_HEADER,
+  apiFetch,
+  sentenceDetailPath,
+  unwrapApiPayload,
+} from '../../config/api';
+import { useProfile } from '../context/ProfileContext';
 
 interface MistakeItem {
   type: string;
@@ -172,6 +179,7 @@ function parseHistoryResponse(json: unknown): {
 }
 
 export function CorrectSentence() {
+  const { selectedProfileId } = useProfile();
   const [sentence, setSentence] = useState('');
   const [history, setHistory] = useState<SentenceAnalysis[]>([]);
   const [historyTotal, setHistoryTotal] = useState(0);
@@ -265,7 +273,14 @@ export function CorrectSentence() {
       page: String(page),
       page_size: String(HISTORY_PAGE_SIZE),
     });
-    const res = await apiFetch(`${API_ROUTES.sentenceHistory}?${params}`, { method: 'GET' });
+    const headers = new Headers();
+    if (selectedProfileId) {
+      headers.set(PROFILE_ID_HEADER, selectedProfileId);
+    }
+    const res = await apiFetch(`${API_ROUTES.sentenceHistory}?${params}`, {
+      method: 'GET',
+      headers,
+    });
     const text = await res.text();
     let json: unknown;
     try {
@@ -288,10 +303,15 @@ export function CorrectSentence() {
       setHistory(items);
     }
     return items;
-  }, []);
+  }, [selectedProfileId]);
 
   useEffect(() => {
     let cancelled = false;
+    setSelectedSentenceId(null);
+    setSelectedAnalysis(null);
+    setFullById({});
+    setHistory([]);
+    setHistoryTotal(0);
     setHistoryLoading(true);
     setHistoryError(null);
     fetchHistoryPage(0, 'replace')

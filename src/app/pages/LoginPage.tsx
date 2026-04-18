@@ -25,13 +25,13 @@ export function LoginPage() {
     try {
       if (isLogin) {
         if (await login(usernameOrEmail, password)) {
-          navigate('/home');
+          navigate('/profiles');
         } else {
           setError('Invalid credentials');
         }
       } else {
         if (await register(name, username, email, password)) {
-          navigate('/home');
+          navigate('/profiles');
         } else {
           setError('Registration failed. Please fill all fields.');
         }

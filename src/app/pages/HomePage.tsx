@@ -1,19 +1,31 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
+import { useProfile } from '../context/ProfileContext';
 import { CorrectSentence } from '../components/CorrectSentence';
 import { WritingGrade } from '../components/WritingGrade';
-import { Button } from '../components/ui/button';
 import { motion } from 'motion/react';
-import { BookOpen, LogOut, PenTool, FileText } from 'lucide-react';
+import { BookOpen, LogOut, PenTool, FileText, Users } from 'lucide-react';
 import { useNavigate } from 'react-router';
+import { ProfileAvatar } from '../components/ProfileAvatar';
 
 export function HomePage() {
   const [activeFeature, setActiveFeature] = useState<'sentence' | 'grade'>('sentence');
   const { user, isSessionLoading, logout } = useAuth();
+  const { selectedProfile, selectedProfileId, profilesHydrated } = useProfile();
 
   const welcomeName =
     user?.name?.trim() || user?.username || (isSessionLoading ? '…' : 'there');
   const navigate = useNavigate();
+
+  useEffect(() => {
+    if (!user) {
+      navigate('/', { replace: true });
+      return;
+    }
+    if (!isSessionLoading && profilesHydrated && !selectedProfileId) {
+      navigate('/profiles', { replace: true });
+    }
+  }, [user, isSessionLoading, profilesHydrated, selectedProfileId, navigate]);
 
   const handleLogout = () => {
     logout();
@@ -40,16 +52,47 @@ export function HomePage() {
                 </span>
                 !
               </p>
+              {selectedProfile && (
+                <p className="text-[11px] text-muted-foreground/90 mt-0.5 flex items-center gap-1.5">
+                  <ProfileAvatar
+                    profile={selectedProfile}
+                    sizeClass="w-6 h-6"
+                    fallbackTextClassName="text-[9px] font-bold"
+                  />
+                  Learning as{' '}
+                  <span className="font-medium text-gray-700">{selectedProfile.display_name}</span>
+                </p>
+              )}
             </div>
           </div>
-          <Button
-            variant="outline"
-            onClick={handleLogout}
-            className="rounded-xl border-2 hover:bg-red-50 hover:border-red-300 hover:text-red-600 transition-all"
-          >
-            <LogOut className="w-4 h-4 mr-2" />
-            Logout
-          </Button>
+          <div className="flex items-center gap-2.5">
+            <motion.button
+              type="button"
+              whileHover={{ scale: 1.06, y: -1 }}
+              whileTap={{ scale: 0.94 }}
+              onClick={() => navigate('/profiles')}
+              aria-label="Switch learning profile"
+              title="Profiles"
+              className="group relative size-11 rounded-xl border border-slate-200/90 bg-white/90 text-slate-600 shadow-sm transition-colors hover:border-indigo-300/80 hover:text-indigo-600 hover:shadow-md hover:shadow-indigo-500/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400 focus-visible:ring-offset-2 focus-visible:ring-offset-white"
+            >
+              <span
+                aria-hidden
+                className="pointer-events-none absolute inset-0 rounded-xl bg-gradient-to-br from-indigo-500/[0.06] to-violet-500/[0.08] opacity-0 transition-opacity group-hover:opacity-100"
+              />
+              <Users className="relative mx-auto h-[1.125rem] w-[1.125rem]" strokeWidth={2.25} />
+            </motion.button>
+            <motion.button
+              type="button"
+              whileHover={{ scale: 1.06, y: -1 }}
+              whileTap={{ scale: 0.94 }}
+              onClick={handleLogout}
+              aria-label="Sign out"
+              title="Logout"
+              className="relative size-11 rounded-xl border border-slate-200/90 bg-white/90 text-slate-500 shadow-sm transition-colors hover:border-rose-300/90 hover:bg-gradient-to-br hover:from-rose-50 hover:to-orange-50/80 hover:text-rose-600 hover:shadow-md hover:shadow-rose-500/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-400 focus-visible:ring-offset-2 focus-visible:ring-offset-white"
+            >
+              <LogOut className="relative mx-auto h-[1.125rem] w-[1.125rem]" strokeWidth={2.25} />
+            </motion.button>
+          </div>
         </div>
       </header>
 

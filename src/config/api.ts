@@ -8,7 +8,12 @@ export const API_ROUTES = {
   correctSentence: '/sentence/correct',
   sentenceHistory: '/sentence/history',
   gradeWriting: '/writing/grade',
+  profiles: '/profiles',
 } as const;
+
+export function profileDetailPath(profileId: string): string {
+  return `${API_ROUTES.profiles}/${encodeURIComponent(profileId)}`;
+}
 
 /** GET one sentence analysis by id: `/sentence/{sentence_id}` */
 export function sentenceDetailPath(sentenceId: string): string {
@@ -36,6 +41,9 @@ export function apiUrl(path: string): string {
   const p = path.startsWith('/') ? path : `/${path}`;
   return base ? `${base}${p}` : p;
 }
+
+/** Sentence history/detail/correct may scope rows per learning profile. */
+export const PROFILE_ID_HEADER = 'X-Profile-Id';
 
 /** localStorage key for the JWT / access token from login & register. */
 const TOKEN_KEY = 'access_token';
