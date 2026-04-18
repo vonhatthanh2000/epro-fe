@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router';
 import { motion } from 'motion/react';
-import { ArrowLeft, Check, Trash2 } from 'lucide-react';
+import { ArrowLeft, Check, Loader2, Trash2 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useProfile } from '../context/ProfileContext';
 import { Button } from '../components/ui/button';
@@ -18,7 +18,7 @@ import { cn } from '../components/ui/utils';
 export function EditProfilePage() {
   const { profileId } = useParams<{ profileId: string }>();
   const navigate = useNavigate();
-  const { user } = useAuth();
+  const { user, isSessionLoading } = useAuth();
   const { profiles, updateProfile, removeProfile, accentPresets } = useProfile();
   const [name, setName] = useState('');
   const [initial, setInitial] = useState('');
@@ -44,6 +44,7 @@ export function EditProfilePage() {
   }, [profile, name, initial, accentIndex, accentPresets]);
 
   useEffect(() => {
+    if (isSessionLoading) return;
     if (!user) {
       navigate('/', { replace: true });
       return;
@@ -62,7 +63,7 @@ export function EditProfilePage() {
       );
       setAccentIndex(idx >= 0 ? idx : 0);
     }
-  }, [user, profileId, profile, navigate, accentPresets]);
+  }, [user, isSessionLoading, profileId, profile, navigate, accentPresets]);
 
   const handleBackToSelection = () => {
     navigate('/profiles');
@@ -96,6 +97,15 @@ export function EditProfilePage() {
       /* ignore */
     }
   };
+
+  if (isSessionLoading) {
+    return (
+      <div className="min-h-screen flex flex-col items-center justify-center gap-3 bg-gradient-to-br from-blue-50 via-purple-50 to-pink-50 text-muted-foreground">
+        <Loader2 className="h-9 w-9 animate-spin text-blue-500" aria-hidden />
+        <p className="text-sm">Restoring your session…</p>
+      </div>
+    );
+  }
 
   if (!user || !profileId) {
     return null;

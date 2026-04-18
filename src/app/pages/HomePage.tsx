@@ -4,7 +4,7 @@ import { useProfile } from '../context/ProfileContext';
 import { CorrectSentence } from '../components/CorrectSentence';
 import { WritingGrade } from '../components/WritingGrade';
 import { motion } from 'motion/react';
-import { BookOpen, LogOut, PenTool, FileText, Users } from 'lucide-react';
+import { BookOpen, Loader2, LogOut, PenTool, FileText, Users } from 'lucide-react';
 import { useNavigate } from 'react-router';
 import { ProfileAvatar } from '../components/ProfileAvatar';
 
@@ -18,11 +18,12 @@ export function HomePage() {
   const navigate = useNavigate();
 
   useEffect(() => {
+    if (isSessionLoading) return;
     if (!user) {
       navigate('/', { replace: true });
       return;
     }
-    if (!isSessionLoading && profilesHydrated && !selectedProfileId) {
+    if (profilesHydrated && !selectedProfileId) {
       navigate('/profiles', { replace: true });
     }
   }, [user, isSessionLoading, profilesHydrated, selectedProfileId, navigate]);
@@ -31,6 +32,15 @@ export function HomePage() {
     logout();
     navigate('/');
   };
+
+  if (isSessionLoading) {
+    return (
+      <div className="min-h-screen flex flex-col items-center justify-center gap-3 bg-gradient-to-br from-blue-50 via-purple-50 to-pink-50 text-muted-foreground">
+        <Loader2 className="h-9 w-9 animate-spin text-blue-500" aria-hidden />
+        <p className="text-sm">Restoring your session…</p>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 via-purple-50 to-pink-50">

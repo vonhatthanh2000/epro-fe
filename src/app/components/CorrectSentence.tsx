@@ -11,15 +11,20 @@ import {
   History,
   Lightbulb,
   ArrowRight,
+  FileSearch,
+  TrendingUp,
 } from 'lucide-react';
 import {
   API_ROUTES,
-  PROFILE_ID_HEADER,
   apiFetch,
   sentenceDetailPath,
   unwrapApiPayload,
+  withProfileId,
 } from '../../config/api';
 import { useProfile } from '../context/ProfileContext';
+import { cn } from './ui/utils';
+
+type DetailTab = 'analysis' | 'mistakes' | 'improvements';
 
 interface MistakeItem {
   type: string;
@@ -112,9 +117,13 @@ function parseSentenceAnalysis(
 
 async function fetchSentenceDetail(
   sentenceId: string,
+  profileId: string | null | undefined,
   signal?: AbortSignal
 ): Promise<SentenceAnalysis> {
-  const res = await apiFetch(sentenceDetailPath(sentenceId), { method: 'GET', signal });
+  const res = await apiFetch(
+    sentenceDetailPath(sentenceId),
+    withProfileId(profileId, { method: 'GET', signal })
+  );
   const text = await res.text();
   let json: unknown;
   try {
@@ -193,6 +202,7 @@ export function CorrectSentence() {
   const [detailError, setDetailError] = useState<string | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [detailTab, setDetailTab] = useState<DetailTab>('analysis');
 
   const historyRef = useRef(history);
   historyRef.current = history;
@@ -236,7 +246,7 @@ export function CorrectSentence() {
 
     const t0 = import.meta.env.DEV ? performance.now() : 0;
 
-    fetchSentenceDetail(selectedSentenceId, ac.signal)
+    fetchSentenceDetail(selectedSentenceId, selectedProfileId, ac.signal)
       .then((full) => {
         if (gen !== detailFetchGen.current) return;
         setSelectedAnalysis(full);
@@ -266,21 +276,23 @@ export function CorrectSentence() {
     return () => {
       ac.abort();
     };
-  }, [selectedSentenceId]);
+  }, [selectedSentenceId, selectedProfileId]);
+
+  useEffect(() => {
+    if (selectedAnalysis) {
+      setDetailTab('analysis');
+    }
+  }, [selectedAnalysis?.id]);
 
   const fetchHistoryPage = useCallback(async (page: number, mode: 'replace' | 'append') => {
     const params = new URLSearchParams({
       page: String(page),
       page_size: String(HISTORY_PAGE_SIZE),
     });
-    const headers = new Headers();
-    if (selectedProfileId) {
-      headers.set(PROFILE_ID_HEADER, selectedProfileId);
-    }
-    const res = await apiFetch(`${API_ROUTES.sentenceHistory}?${params}`, {
-      method: 'GET',
-      headers,
-    });
+    const res = await apiFetch(
+      `${API_ROUTES.sentenceHistory}?${params}`,
+      withProfileId(selectedProfileId, { method: 'GET' })
+    );
     const text = await res.text();
     let json: unknown;
     try {
@@ -351,10 +363,13 @@ export function CorrectSentence() {
     setError(null);
 
     try {
-      const res = await apiFetch(API_ROUTES.correctSentence, {
-        method: 'POST',
-        body: JSON.stringify({ text: sentence.trim() }),
-      });
+      const res = await apiFetch(
+        API_ROUTES.correctSentence,
+        withProfileId(selectedProfileId, {
+          method: 'POST',
+          body: JSON.stringify({ text: sentence.trim() }),
+        })
+      );
       const text = await res.text();
       let json: unknown;
       try {
@@ -535,7 +550,7 @@ export function CorrectSentence() {
             <p className="text-sm text-muted-foreground">Loading analysis…</p>
           </div>
         ) : selectedAnalysis ? (
-          <div className="space-y-6 relative">
+          <div className="space-y-4 relative">
             {detailLoading && selectedAnalysis?.isHistorySummary && (
               <p className="text-xs text-muted-foreground">Fetching full details from server…</p>
             )}
@@ -545,117 +560,220 @@ export function CorrectSentence() {
               </p>
             )}
 
-            <div className="flex flex-wrap items-center gap-2">
-              <h3 className="text-blue-600">Analysis</h3>
-              <Badge variant={selectedAnalysis.has_mistakes ? 'destructive' : 'secondary'}>
-                {selectedAnalysis.has_mistakes ? 'Has mistakes' : 'No mistakes'}
-              </Badge>
+            <div
+              className="flex flex-wrap gap-1.5 rounded-xl bg-gray-100/90 p-1.5"
+              role="tablist"
+              aria-label="Analysis sections"
+            >
+              <button
+                type="button"
+                role="tab"
+                aria-selected={detailTab === 'analysis'}
+                id="detail-tab-analysis"
+                aria-controls="detail-panel-analysis"
+                onClick={() => setDetailTab('analysis')}
+                className={cn(
+                  'inline-flex flex-1 min-w-[6.5rem] items-center justify-center gap-2 rounded-lg px-2.5 py-2.5 text-sm font-medium transition-all',
+                  detailTab === 'analysis'
+                    ? 'bg-white text-blue-700 shadow-sm ring-1 ring-blue-200/70'
+                    : 'text-muted-foreground hover:bg-white/60 hover:text-gray-800'
+                )}
+              >
+                <FileSearch className="h-4 w-4 shrink-0 text-blue-500" aria-hidden />
+                Analysis
+              </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={detailTab === 'mistakes'}
+                id="detail-tab-mistakes"
+                aria-controls="detail-panel-mistakes"
+                onClick={() => setDetailTab('mistakes')}
+                className={cn(
+                  'inline-flex flex-1 min-w-[6.5rem] items-center justify-center gap-2 rounded-lg px-2.5 py-2.5 text-sm font-medium transition-all',
+                  detailTab === 'mistakes'
+                    ? 'bg-white text-red-700 shadow-sm ring-1 ring-red-200/70'
+                    : 'text-muted-foreground hover:bg-white/60 hover:text-gray-800'
+                )}
+              >
+                <AlertCircle className="h-4 w-4 shrink-0 text-red-500" aria-hidden />
+                <span className="truncate">Mistakes</span>
+                {selectedAnalysis.mistakes.length > 0 && (
+                  <span className="rounded-full bg-red-100 px-1.5 py-0.5 text-[10px] font-semibold leading-none text-red-700 tabular-nums">
+                    {selectedAnalysis.mistakes.length}
+                  </span>
+                )}
+              </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={detailTab === 'improvements'}
+                id="detail-tab-improvements"
+                aria-controls="detail-panel-improvements"
+                onClick={() => setDetailTab('improvements')}
+                className={cn(
+                  'inline-flex flex-1 min-w-[6.5rem] items-center justify-center gap-2 rounded-lg px-2.5 py-2.5 text-sm font-medium transition-all',
+                  detailTab === 'improvements'
+                    ? 'bg-white text-indigo-700 shadow-sm ring-1 ring-indigo-200/70'
+                    : 'text-muted-foreground hover:bg-white/60 hover:text-gray-800'
+                )}
+              >
+                <TrendingUp className="h-4 w-4 shrink-0 text-indigo-500" aria-hidden />
+                <span className="truncate text-left leading-tight">Improvements</span>
+                {selectedAnalysis.improvements.length > 0 && (
+                  <span className="rounded-full bg-indigo-100 px-1.5 py-0.5 text-[10px] font-semibold leading-none text-indigo-800 tabular-nums">
+                    {selectedAnalysis.improvements.length}
+                  </span>
+                )}
+              </button>
             </div>
 
-            <div>
-              <div className="mb-4 p-4 bg-red-50 rounded-xl border-2 border-red-200">
-                <div className="flex items-start gap-2 mb-2">
-                  <AlertCircle className="w-5 h-5 text-red-600 mt-0.5 shrink-0" />
-                  <span className="text-sm text-red-900">Original</span>
-                </div>
-                <p className="text-gray-800 ml-7">{selectedAnalysis.original}</p>
-              </div>
-
-              <div className="mb-4 p-4 bg-green-50 rounded-xl border-2 border-green-200">
-                <div className="flex items-start gap-2 mb-2">
-                  <CheckCircle className="w-5 h-5 text-green-600 mt-0.5 shrink-0" />
-                  <span className="text-sm text-green-900">Corrected</span>
-                </div>
-                <p className="text-gray-800 ml-7">{selectedAnalysis.corrected}</p>
-              </div>
-
-              {selectedAnalysis.natural.trim() !== '' && (
-                <div className="p-4 bg-violet-50 rounded-xl border-2 border-violet-200">
-                  <div className="flex items-start gap-2 mb-2">
-                    <Sparkles className="w-5 h-5 text-violet-600 mt-0.5 shrink-0" />
-                    <span className="text-sm text-violet-900">More natural</span>
+            <AnimatePresence mode="wait">
+              {detailTab === 'analysis' && (
+                <motion.div
+                  key="analysis"
+                  role="tabpanel"
+                  id="detail-panel-analysis"
+                  aria-labelledby="detail-tab-analysis"
+                  initial={{ opacity: 0, y: 8 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -6 }}
+                  transition={{ duration: 0.18 }}
+                  className="space-y-4 min-h-[120px]"
+                >
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Badge variant={selectedAnalysis.has_mistakes ? 'destructive' : 'secondary'}>
+                      {selectedAnalysis.has_mistakes ? 'Has mistakes' : 'No mistakes'}
+                    </Badge>
                   </div>
-                  <p className="text-gray-800 ml-7">{selectedAnalysis.natural}</p>
-                </div>
-              )}
-            </div>
 
-            {selectedAnalysis.tip.trim() !== '' && (
-              <div className="flex gap-3 p-4 rounded-xl bg-amber-50 border border-amber-200">
-                <Lightbulb className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
-                <div>
-                  <p className="text-sm font-medium text-amber-900 mb-1">Tip</p>
-                  <p className="text-sm text-gray-800">{selectedAnalysis.tip}</p>
-                </div>
-              </div>
-            )}
+                  <div className="mb-4 p-4 bg-red-50 rounded-xl border-2 border-red-200">
+                    <div className="flex items-start gap-2 mb-2">
+                      <AlertCircle className="w-5 h-5 text-red-600 mt-0.5 shrink-0" />
+                      <span className="text-sm text-red-900">Original</span>
+                    </div>
+                    <p className="text-gray-800 ml-7">{selectedAnalysis.original}</p>
+                  </div>
 
-            <div>
-              <h4 className="mb-3 text-red-600">Mistakes</h4>
-              {selectedAnalysis.mistakes.length === 0 ? (
-                <p className="text-sm text-muted-foreground">None listed.</p>
-              ) : (
-                <div className="space-y-3">
-                  {selectedAnalysis.mistakes.map((m, index) => (
-                    <motion.div
-                      key={`${m.type}-${m.original}-${index}`}
-                      initial={{ opacity: 0, x: -10 }}
-                      animate={{ opacity: 1, x: 0 }}
-                      transition={{ delay: index * 0.05 }}
-                      className="p-4 bg-red-50 rounded-xl border border-red-100 space-y-2"
-                    >
-                      <div className="flex flex-wrap items-center gap-2">
-                        {m.type.trim() !== '' && (
-                          <Badge variant="outline" className="text-xs capitalize">
-                            {m.type}
-                          </Badge>
-                        )}
+                  <div className="mb-4 p-4 bg-green-50 rounded-xl border-2 border-green-200">
+                    <div className="flex items-start gap-2 mb-2">
+                      <CheckCircle className="w-5 h-5 text-green-600 mt-0.5 shrink-0" />
+                      <span className="text-sm text-green-900">Corrected</span>
+                    </div>
+                    <p className="text-gray-800 ml-7">{selectedAnalysis.corrected}</p>
+                  </div>
+
+                  {selectedAnalysis.natural.trim() !== '' && (
+                    <div className="p-4 bg-violet-50 rounded-xl border-2 border-violet-200">
+                      <div className="flex items-start gap-2 mb-2">
+                        <Sparkles className="w-5 h-5 text-violet-600 mt-0.5 shrink-0" />
+                        <span className="text-sm text-violet-900">More natural</span>
                       </div>
-                      <p className="text-sm text-gray-800">
-                        <span className="text-red-700 line-through decoration-red-300">{m.original}</span>
-                        {m.original && m.fix ? (
-                          <span className="mx-2 text-muted-foreground" aria-hidden>
-                            →
-                          </span>
-                        ) : null}
-                        <span className="text-green-800 font-medium">{m.fix}</span>
-                      </p>
-                      {m.explanation.trim() !== '' && (
-                        <p className="text-sm text-muted-foreground">{m.explanation}</p>
-                      )}
-                    </motion.div>
-                  ))}
-                </div>
-              )}
-            </div>
+                      <p className="text-gray-800 ml-7">{selectedAnalysis.natural}</p>
+                    </div>
+                  )}
 
-            <div>
-              <h4 className="mb-3 text-blue-600">Improvements</h4>
-              {selectedAnalysis.improvements.length === 0 ? (
-                <p className="text-sm text-muted-foreground">None listed.</p>
-              ) : (
-                <div className="space-y-3">
-                  {selectedAnalysis.improvements.map((imp, index) => (
-                    <motion.div
-                      key={`${imp.original_phrase}-${index}`}
-                      initial={{ opacity: 0, x: -10 }}
-                      animate={{ opacity: 1, x: 0 }}
-                      transition={{ delay: index * 0.05 }}
-                      className="p-4 bg-blue-50 rounded-xl border border-blue-100 space-y-2"
-                    >
-                      <div className="flex flex-wrap items-center gap-2 text-sm">
-                        <span className="text-gray-700">{imp.original_phrase}</span>
-                        <ArrowRight className="w-4 h-4 text-blue-500 shrink-0" />
-                        <span className="font-medium text-blue-900">{imp.improved_phrase}</span>
+                  {selectedAnalysis.tip.trim() !== '' && (
+                    <div className="flex gap-3 p-4 rounded-xl bg-amber-50 border border-amber-200">
+                      <Lightbulb className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+                      <div>
+                        <p className="text-sm font-medium text-amber-900 mb-1">Tip</p>
+                        <p className="text-sm text-gray-800">{selectedAnalysis.tip}</p>
                       </div>
-                      {imp.explanation.trim() !== '' && (
-                        <p className="text-sm text-muted-foreground">{imp.explanation}</p>
-                      )}
-                    </motion.div>
-                  ))}
-                </div>
+                    </div>
+                  )}
+                </motion.div>
               )}
-            </div>
+
+              {detailTab === 'mistakes' && (
+                <motion.div
+                  key="mistakes"
+                  role="tabpanel"
+                  id="detail-panel-mistakes"
+                  aria-labelledby="detail-tab-mistakes"
+                  initial={{ opacity: 0, y: 8 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -6 }}
+                  transition={{ duration: 0.18 }}
+                  className="min-h-[120px]"
+                >
+                  {selectedAnalysis.mistakes.length === 0 ? (
+                    <p className="text-sm text-muted-foreground py-2">None listed.</p>
+                  ) : (
+                    <div className="space-y-3">
+                      {selectedAnalysis.mistakes.map((m, index) => (
+                        <motion.div
+                          key={`${m.type}-${m.original}-${index}`}
+                          initial={{ opacity: 0, x: -10 }}
+                          animate={{ opacity: 1, x: 0 }}
+                          transition={{ delay: index * 0.05 }}
+                          className="p-4 bg-red-50 rounded-xl border border-red-100 space-y-2"
+                        >
+                          <div className="flex flex-wrap items-center gap-2">
+                            {m.type.trim() !== '' && (
+                              <Badge variant="outline" className="text-xs capitalize">
+                                {m.type}
+                              </Badge>
+                            )}
+                          </div>
+                          <p className="text-sm text-gray-800">
+                            <span className="text-red-700 line-through decoration-red-300">{m.original}</span>
+                            {m.original && m.fix ? (
+                              <span className="mx-2 text-muted-foreground" aria-hidden>
+                                →
+                              </span>
+                            ) : null}
+                            <span className="text-green-800 font-medium">{m.fix}</span>
+                          </p>
+                          {m.explanation.trim() !== '' && (
+                            <p className="text-sm text-muted-foreground">{m.explanation}</p>
+                          )}
+                        </motion.div>
+                      ))}
+                    </div>
+                  )}
+                </motion.div>
+              )}
+
+              {detailTab === 'improvements' && (
+                <motion.div
+                  key="improvements"
+                  role="tabpanel"
+                  id="detail-panel-improvements"
+                  aria-labelledby="detail-tab-improvements"
+                  initial={{ opacity: 0, y: 8 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -6 }}
+                  transition={{ duration: 0.18 }}
+                  className="min-h-[120px]"
+                >
+                  {selectedAnalysis.improvements.length === 0 ? (
+                    <p className="text-sm text-muted-foreground py-2">None listed.</p>
+                  ) : (
+                    <div className="space-y-3">
+                      {selectedAnalysis.improvements.map((imp, index) => (
+                        <motion.div
+                          key={`${imp.original_phrase}-${index}`}
+                          initial={{ opacity: 0, x: -10 }}
+                          animate={{ opacity: 1, x: 0 }}
+                          transition={{ delay: index * 0.05 }}
+                          className="p-4 bg-blue-50 rounded-xl border border-blue-100 space-y-2"
+                        >
+                          <div className="flex flex-wrap items-center gap-2 text-sm">
+                            <span className="text-gray-700">{imp.original_phrase}</span>
+                            <ArrowRight className="w-4 h-4 text-blue-500 shrink-0" />
+                            <span className="font-medium text-blue-900">{imp.improved_phrase}</span>
+                          </div>
+                          {imp.explanation.trim() !== '' && (
+                            <p className="text-sm text-muted-foreground">{imp.explanation}</p>
+                          )}
+                        </motion.div>
+                      ))}
+                    </div>
+                  )}
+                </motion.div>
+              )}
+            </AnimatePresence>
           </div>
         ) : (
           <div className="flex flex-col items-center justify-center h-full text-center py-12">

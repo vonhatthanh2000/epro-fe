@@ -3,7 +3,8 @@ import { Button } from './ui/button';
 import { Textarea } from './ui/textarea';
 import { motion } from 'motion/react';
 import { FileText, TrendingUp, Award, Target, Sparkles } from 'lucide-react';
-import { API_ROUTES, apiFetch, unwrapApiPayload } from '../../config/api';
+import { API_ROUTES, apiFetch, unwrapApiPayload, withProfileId } from '../../config/api';
+import { useProfile } from '../context/ProfileContext';
 
 interface GradeAnalysis {
   score: number;
@@ -30,6 +31,7 @@ function parseGradeAnalysis(data: Record<string, unknown>): GradeAnalysis {
 }
 
 export function WritingGrade() {
+  const { selectedProfileId } = useProfile();
   const [text, setText] = useState('');
   const [analysis, setAnalysis] = useState<GradeAnalysis | null>(null);
   const [isGrading, setIsGrading] = useState(false);
@@ -42,10 +44,13 @@ export function WritingGrade() {
     setError(null);
 
     try {
-      const res = await apiFetch(API_ROUTES.gradeWriting, {
-        method: 'POST',
-        body: JSON.stringify({ text: text.trim() }),
-      });
+      const res = await apiFetch(
+        API_ROUTES.gradeWriting,
+        withProfileId(selectedProfileId, {
+          method: 'POST',
+          body: JSON.stringify({ text: text.trim() }),
+        })
+      );
       const bodyText = await res.text();
       let json: unknown;
       try {

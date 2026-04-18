@@ -42,8 +42,22 @@ export function apiUrl(path: string): string {
   return base ? `${base}${p}` : p;
 }
 
-/** Sentence history/detail/correct may scope rows per learning profile. */
+/** Sentence / writing / history endpoints may scope data per learning profile. */
 export const PROFILE_ID_HEADER = 'X-Profile-Id';
+
+/**
+ * Merge `X-Profile-Id` into request `init` when `profileId` is set.
+ */
+export function withProfileId(
+  profileId: string | null | undefined,
+  init: RequestInit = {}
+): RequestInit {
+  const headers = new Headers(init.headers);
+  if (profileId) {
+    headers.set(PROFILE_ID_HEADER, profileId);
+  }
+  return { ...init, headers };
+}
 
 /** localStorage key for the JWT / access token from login & register. */
 const TOKEN_KEY = 'access_token';

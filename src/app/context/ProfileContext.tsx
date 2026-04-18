@@ -190,7 +190,12 @@ interface ProfileContextType {
   profilesHydrated: boolean;
   profilesLoadError: string | null;
   selectProfile: (id: string) => void;
-  addProfile: (displayName: string, accentIndex?: number) => Promise<LearningProfile>;
+  addProfile: (
+    displayName: string,
+    accentIndex?: number,
+    /** Optional 1–2 chars for UI Avatars; defaults from display name. */
+    avatarSeed?: string
+  ) => Promise<LearningProfile>;
   updateProfile: (
     id: string,
     updates: Partial<Pick<LearningProfile, 'display_name'>> & {
@@ -271,7 +276,11 @@ export function ProfileProvider({ children }: { children: ReactNode }) {
     [user]
   );
 
-  const addProfile = useCallback(async (displayName: string, accentIndex?: number) => {
+  const addProfile = useCallback(async (
+    displayName: string,
+    accentIndex?: number,
+    avatarSeed?: string
+  ) => {
     const trimmed = displayName.trim();
     if (!trimmed) {
       throw new Error('Display name is required.');
@@ -282,9 +291,11 @@ export function ProfileProvider({ children }: { children: ReactNode }) {
         : profilesRef.current.length % ACCENT_PRESETS.length;
     const hex = ACCENT_PRESETS[idx].hex;
     const accent_color = normalizeAccentColorForApi(hex);
+    const nameForAvatar =
+      avatarSeed?.trim().slice(0, 2) || initialsFromDisplayName(trimmed);
     const created = await createProfileRequest({
       display_name: trimmed,
-      avatar_url: generateAvatarUrl(trimmed, accent_color),
+      avatar_url: generateAvatarUrl(nameForAvatar, accent_color),
       accent_color,
     });
     setProfiles((prev) => [...prev, created]);

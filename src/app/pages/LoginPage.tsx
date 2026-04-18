@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router';
 import { useAuth } from '../context/AuthContext';
 import { Button } from '../components/ui/button';
@@ -16,7 +16,14 @@ export function LoginPage() {
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const navigate = useNavigate();
-  const { login, register } = useAuth();
+  const { login, register, user, isSessionLoading } = useAuth();
+
+  useEffect(() => {
+    if (isSessionLoading) return;
+    if (user) {
+      navigate('/profiles', { replace: true });
+    }
+  }, [user, isSessionLoading, navigate]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();

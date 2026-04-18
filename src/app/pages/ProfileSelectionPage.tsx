@@ -15,6 +15,14 @@ import {
 import { useAuth } from '../context/AuthContext';
 import { useProfile } from '../context/ProfileContext';
 import { Button } from '../components/ui/button';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '../components/ui/dialog';
 import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
 import { ProfileAvatar } from '../components/ProfileAvatar';
@@ -24,7 +32,7 @@ import { cn } from '../components/ui/utils';
 
 export function ProfileSelectionPage() {
   const navigate = useNavigate();
-  const { user, logout } = useAuth();
+  const { user, logout, isSessionLoading } = useAuth();
   const {
     profiles,
     selectedProfileId,
@@ -37,25 +45,29 @@ export function ProfileSelectionPage() {
   const [newName, setNewName] = useState('');
   const [showAdd, setShowAdd] = useState(false);
   const [addAccentIndex, setAddAccentIndex] = useState(0);
+  const [addAvatarDisplay, setAddAvatarDisplay] = useState('');
   const [addError, setAddError] = useState<string | null>(null);
 
   const addFormPreview = useMemo(() => {
     const display_name = newName.trim() || `Profile ${profiles.length + 1}`;
     const hex = accentPresets[addAccentIndex % accentPresets.length].hex;
     const accent_color = normalizeAccentColorForApi(hex);
+    const seed =
+      addAvatarDisplay.trim().slice(0, 2) || initialsFromDisplayName(display_name);
     return {
       id: 'add-preview',
       display_name,
-      avatar_url: generateAvatarUrl(initialsFromDisplayName(display_name), accent_color),
+      avatar_url: generateAvatarUrl(seed, accent_color),
       accent_color,
     };
-  }, [newName, addAccentIndex, accentPresets, profiles.length]);
+  }, [newName, addAvatarDisplay, addAccentIndex, accentPresets, profiles.length]);
 
   useEffect(() => {
+    if (isSessionLoading) return;
     if (!user) {
       navigate('/', { replace: true });
     }
-  }, [user, navigate]);
+  }, [user, isSessionLoading, navigate]);
 
   const handleSwitchAccount = () => {
     logout();
@@ -71,10 +83,13 @@ export function ProfileSelectionPage() {
     setAddError(null);
     const displayName = newName.trim() || `Profile ${profiles.length + 1}`;
     try {
-      const created = await addProfile(displayName, addAccentIndex);
+      const seed = addAvatarDisplay.trim().slice(0, 2);
+      const created = await addProfile(displayName, addAccentIndex, seed || undefined);
       selectProfile(created.id);
       setNewName('');
+      setAddAvatarDisplay('');
       setShowAdd(false);
+      setAddError(null);
       setAddAccentIndex((profiles.length + 1) % accentPresets.length);
     } catch (e) {
       setAddError(e instanceof Error ? e.message : 'Could not create profile');
@@ -85,6 +100,24 @@ export function ProfileSelectionPage() {
     if (!selectedProfileId) return;
     navigate('/home');
   };
+
+  const handleAddDialogOpenChange = (open: boolean) => {
+    setShowAdd(open);
+    if (!open) {
+      setNewName('');
+      setAddAvatarDisplay('');
+      setAddError(null);
+    }
+  };
+
+  if (isSessionLoading) {
+    return (
+      <div className="min-h-screen flex flex-col items-center justify-center gap-3 bg-gradient-to-br from-blue-50 via-purple-50 to-pink-50 text-muted-foreground">
+        <Loader2 className="h-9 w-9 animate-spin text-blue-500" aria-hidden />
+        <p className="text-sm">Restoring your session…</p>
+      </div>
+    );
+  }
 
   if (!user) {
     return null;
@@ -181,94 +214,128 @@ export function ProfileSelectionPage() {
               transition={{ delay: profiles.length * 0.06 }}
               className="flex flex-col items-center gap-2"
             >
-              {showAdd ? (
-                <div className="flex flex-col items-center gap-3 w-full max-w-[280px]">
-                  <ProfileAvatar profile={addFormPreview} sizeClass="w-20 h-20" />
-                  <div className="w-full space-y-1.5">
-                    <Label htmlFor="add-profile-name" className="text-xs text-muted-foreground">
-                      Display name
+              <motion.button
+                type="button"
+                whileHover={{ scale: 1.06 }}
+                whileTap={{ scale: 0.98 }}
+                onClick={() => {
+                  setAddAccentIndex(profiles.length % accentPresets.length);
+                  setAddAvatarDisplay('');
+                  setNewName('');
+                  setAddError(null);
+                  setShowAdd(true);
+                }}
+                className="w-[88px] h-[88px] sm:w-24 sm:h-24 rounded-full border-2 border-dashed border-gray-300 bg-gray-50/80 flex items-center justify-center text-gray-500 hover:border-blue-300 hover:bg-blue-50/50 hover:text-blue-600 transition-colors"
+              >
+                <Plus className="w-9 h-9" />
+              </motion.button>
+              <span className="text-xs sm:text-sm font-medium text-gray-500">Add profile</span>
+            </motion.div>
+            )}
+          </div>
+
+          <Dialog open={showAdd} onOpenChange={handleAddDialogOpenChange}>
+            <DialogContent className="max-h-[min(90vh,640px)] overflow-y-auto border-white/80 bg-white/95 p-0 shadow-2xl sm:max-w-md sm:rounded-2xl">
+              <div className="px-6 pb-2 pt-6 pr-14 text-center">
+                <DialogHeader className="items-center gap-2 text-center sm:text-center">
+                  <DialogTitle className="text-xl font-semibold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
+                    New profile
+                  </DialogTitle>
+                  <DialogDescription className="sr-only">
+                    Create a learning profile with name, avatar letters, and color.
+                  </DialogDescription>
+                </DialogHeader>
+              </div>
+              <div className="space-y-5 px-6 py-4 text-center">
+                <div className="flex justify-center">
+                  <ProfileAvatar profile={addFormPreview} sizeClass="w-24 h-24" />
+                </div>
+                <div className="mx-auto grid w-full max-w-md grid-cols-[1fr_7.5rem] gap-3 items-end">
+                  <div className="min-w-0 space-y-2 text-center">
+                    <Label
+                      htmlFor="add-profile-name"
+                      className="block text-center text-sm text-muted-foreground"
+                    >
+                      Name
                     </Label>
                     <Input
                       id="add-profile-name"
                       value={newName}
                       onChange={(e) => setNewName(e.target.value)}
-                      placeholder="Display name"
-                      className="h-9 rounded-xl text-sm text-center"
+                      placeholder={`Profile ${profiles.length + 1}`}
+                      className="h-11 w-full rounded-xl border-2 text-center text-base"
                       autoFocus
                       onKeyDown={(e) => e.key === 'Enter' && void handleAddProfile()}
                     />
                   </div>
-                  <div className="w-full space-y-1.5">
-                    <Label className="text-xs text-muted-foreground">Color</Label>
-                    <div className="flex flex-wrap justify-center gap-2">
-                      {accentPresets.map((preset, i) => (
-                        <button
-                          key={i}
-                          type="button"
-                          onClick={() => setAddAccentIndex(i)}
-                          className={cn(
-                            'w-9 h-9 sm:w-10 sm:h-10 rounded-full bg-gradient-to-br flex items-center justify-center ring-2 ring-offset-2 ring-offset-white/90 transition-transform hover:scale-105',
-                            preset.accentFrom,
-                            preset.accentTo,
-                            addAccentIndex === i ? preset.ringClass : 'ring-transparent'
-                          )}
-                          aria-label={`Accent color ${i + 1}`}
-                        >
-                          {addAccentIndex === i && (
-                            <Check className="w-4 h-4 text-white drop-shadow-md" aria-hidden />
-                          )}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                  {addError && (
-                    <p className="text-xs text-red-600 text-center" role="alert">
-                      {addError}
-                    </p>
-                  )}
-                  <div className="flex gap-1 w-full">
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="outline"
-                      className="flex-1 rounded-lg text-xs"
-                      onClick={() => {
-                        setShowAdd(false);
-                        setNewName('');
-                      }}
+                  <div className="shrink-0 space-y-2 text-center">
+                    <Label
+                      htmlFor="add-profile-avatar-display"
+                      className="block text-center text-sm text-muted-foreground"
                     >
-                      Cancel
-                    </Button>
-                    <Button
-                      type="button"
-                      size="sm"
-                      className="flex-1 rounded-lg text-xs bg-gradient-to-r from-blue-500 to-purple-600"
-                      onClick={handleAddProfile}
-                    >
-                      Add
-                    </Button>
+                      Avatar
+                    </Label>
+                    <Input
+                      id="add-profile-avatar-display"
+                      value={addAvatarDisplay}
+                      onChange={(e) => setAddAvatarDisplay(e.target.value.slice(0, 2))}
+                      placeholder={initialsFromDisplayName(
+                        newName.trim() || `Profile ${profiles.length + 1}`
+                      )}
+                      className="h-11 w-full rounded-xl border-2 text-center text-base uppercase tracking-wide"
+                      maxLength={2}
+                      autoComplete="off"
+                    />
                   </div>
                 </div>
-              ) : (
-                <motion.button
+                <div className="space-y-3">
+                  <Label className="block text-center text-sm text-muted-foreground">Color</Label>
+                  <div className="flex flex-wrap justify-center gap-2.5">
+                    {accentPresets.map((preset, i) => (
+                      <button
+                        key={i}
+                        type="button"
+                        onClick={() => setAddAccentIndex(i)}
+                        className={cn(
+                          'h-11 w-11 rounded-full bg-gradient-to-br flex items-center justify-center ring-2 ring-offset-2 ring-offset-white transition-transform hover:scale-105',
+                          preset.accentFrom,
+                          preset.accentTo,
+                          addAccentIndex === i ? preset.ringClass : 'ring-transparent'
+                        )}
+                        aria-label={`Color ${i + 1}`}
+                      >
+                        {addAccentIndex === i && (
+                          <Check className="w-5 h-5 text-white drop-shadow-md" aria-hidden />
+                        )}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                {addError && (
+                  <p className="text-center text-sm text-red-600" role="alert">
+                    {addError}
+                  </p>
+                )}
+              </div>
+              <DialogFooter className="flex flex-row justify-center gap-3 border-t border-gray-100 bg-gray-50/80 px-6 py-4 sm:justify-center">
+                <Button
                   type="button"
-                  whileHover={{ scale: 1.06 }}
-                  whileTap={{ scale: 0.98 }}
-                  onClick={() => {
-                    setAddAccentIndex(profiles.length % accentPresets.length);
-                    setShowAdd(true);
-                  }}
-                  className="w-[88px] h-[88px] sm:w-24 sm:h-24 rounded-full border-2 border-dashed border-gray-300 bg-gray-50/80 flex items-center justify-center text-gray-500 hover:border-blue-300 hover:bg-blue-50/50 hover:text-blue-600 transition-colors"
+                  variant="outline"
+                  className="min-w-[100px] rounded-xl"
+                  onClick={() => handleAddDialogOpenChange(false)}
                 >
-                  <Plus className="w-9 h-9" />
-                </motion.button>
-              )}
-              {!showAdd && (
-                <span className="text-xs sm:text-sm font-medium text-gray-500">Add profile</span>
-              )}
-            </motion.div>
-            )}
-          </div>
+                  Cancel
+                </Button>
+                <Button
+                  type="button"
+                  className="min-w-[140px] rounded-xl bg-gradient-to-r from-blue-500 to-purple-600"
+                  onClick={() => void handleAddProfile()}
+                >
+                  Create
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
 
           <div className="space-y-3">
             <Button
