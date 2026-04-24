@@ -7,9 +7,21 @@ export const API_ROUTES = {
   me: '/users/me',
   correctSentence: '/sentence/correct',
   sentenceHistory: '/sentence/history',
+  analyzeSentences: '/sentence/analyze',
+  sentenceAnalyses: '/sentence/analyses',
   gradeWriting: '/writing/grade',
   profiles: '/profiles',
 } as const;
+
+/** GET sentence analysis list: `/v1/sentence/analyses` */
+export function sentenceAnalysesPath(): string {
+  return API_ROUTES.sentenceAnalyses;
+}
+
+/** GET one sentence analysis by id: `/v1/sentence/analyses/{analysis_id}` */
+export function sentenceAnalysisDetailPath(analysisId: string): string {
+  return `${API_ROUTES.sentenceAnalyses}/${encodeURIComponent(analysisId)}`;
+}
 
 export function profileDetailPath(profileId: string): string {
   return `${API_ROUTES.profiles}/${encodeURIComponent(profileId)}`;

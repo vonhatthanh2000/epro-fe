@@ -3,6 +3,8 @@ import { Button } from './ui/button';
 import { Textarea } from './ui/textarea';
 import { Badge } from './ui/badge';
 import { motion, AnimatePresence } from 'motion/react';
+import Markdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import {
   Send,
   CheckCircle,
@@ -13,11 +15,14 @@ import {
   ArrowRight,
   FileSearch,
   TrendingUp,
+  BarChart3,
 } from 'lucide-react';
 import {
   API_ROUTES,
   apiFetch,
   sentenceDetailPath,
+  sentenceAnalysesPath,
+  sentenceAnalysisDetailPath,
   unwrapApiPayload,
   withProfileId,
 } from '../../config/api';
@@ -49,8 +54,20 @@ interface SentenceAnalysis {
   improvements: ImprovementItem[];
   tip: string;
   timestamp: Date;
+  /** Indicates if the sentence has been batch analyzed for summary review */
+  analyzed?: boolean;
   /** From GET /sentence/history — mistakes/improvements/tip not included. */
   isHistorySummary?: boolean;
+}
+
+interface BatchAnalysisItem {
+  id: string;
+  content: string;
+  created_at: string;
+}
+
+interface BatchAnalysisDetail extends BatchAnalysisItem {
+  content: string;
 }
 
 function parseTimestamp(data: Record<string, unknown>): Date {
@@ -111,6 +128,7 @@ function parseSentenceAnalysis(
     improvements,
     tip: String(data.tip ?? ''),
     timestamp: parseTimestamp(data),
+    analyzed: Boolean(data.analyzed),
     isHistorySummary: false,
   };
 }
@@ -157,6 +175,7 @@ function historyRowToSummary(row: Record<string, unknown>): SentenceAnalysis {
     improvements: [],
     tip: '',
     timestamp: parseTimestamp(row),
+    analyzed: Boolean(row.analyzed),
     isHistorySummary: true,
   };
 }
@@ -203,12 +222,28 @@ export function CorrectSentence() {
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [detailTab, setDetailTab] = useState<DetailTab>('analysis');
+  const [isBatchAnalyzing, setIsBatchAnalyzing] = useState(false);
+  const [batchAnalysisError, setBatchAnalysisError] = useState<string | null>(null);
+  const [batchAnalysisResult, setBatchAnalysisResult] = useState<string | null>(null);
+
+  // Analyses list state
+  const [analyses, setAnalyses] = useState<BatchAnalysisItem[]>([]);
+  const [analysesTotal, setAnalysesTotal] = useState(0);
+  const [analysesLoading, setAnalysesLoading] = useState(false);
+  const [analysesError, setAnalysesError] = useState<string | null>(null);
+  const [selectedBatchAnalysisId, setSelectedBatchAnalysisId] = useState<string | null>(null);
+  const [selectedBatchAnalysis, setSelectedBatchAnalysis] = useState<BatchAnalysisDetail | null>(null);
+  const [batchAnalysisDetailLoading, setBatchAnalysisDetailLoading] = useState(false);
+  const [batchAnalysisDetailError, setBatchAnalysisDetailError] = useState<string | null>(null);
+  const [analysesPage, setAnalysesPage] = useState(0);
+  const [analysesLoadingMore, setAnalysesLoadingMore] = useState(false);
 
   const historyRef = useRef(history);
   historyRef.current = history;
   const fullByIdRef = useRef(fullById);
   fullByIdRef.current = fullById;
   const detailFetchGen = useRef(0);
+  const analysesFetchGen = useRef(0);
 
   useEffect(() => {
     if (!selectedSentenceId) {
@@ -284,6 +319,26 @@ export function CorrectSentence() {
     }
   }, [selectedAnalysis?.id]);
 
+  // Fetch batch analysis detail when selected
+  useEffect(() => {
+    if (!selectedBatchAnalysisId) {
+      setSelectedBatchAnalysis(null);
+      setBatchAnalysisDetailLoading(false);
+      setBatchAnalysisDetailError(null);
+      return;
+    }
+
+    // Check if already cached in analyses list
+    const cached = analyses.find((a) => a.id === selectedBatchAnalysisId);
+    if (cached) {
+      setSelectedBatchAnalysis(cached as BatchAnalysisDetail);
+    } else {
+      setSelectedBatchAnalysis(null);
+    }
+
+    void fetchBatchAnalysisDetail(selectedBatchAnalysisId);
+  }, [selectedBatchAnalysisId, selectedProfileId]);
+
   const fetchHistoryPage = useCallback(async (page: number, mode: 'replace' | 'append') => {
     const params = new URLSearchParams({
       page: String(page),
@@ -356,6 +411,171 @@ export function CorrectSentence() {
     }
   };
 
+  // Analyses fetch functions
+  const fetchAnalysesPage = useCallback(async (page: number, mode: 'replace' | 'append') => {
+    const params = new URLSearchParams({
+      page: String(page),
+      page_size: String(HISTORY_PAGE_SIZE),
+    });
+    const res = await apiFetch(
+      `${sentenceAnalysesPath()}?${params}`,
+      withProfileId(selectedProfileId, { method: 'GET' })
+    );
+    const text = await res.text();
+    let json: unknown;
+    try {
+      json = text ? JSON.parse(text) : null;
+    } catch {
+      throw new Error(text || 'Invalid JSON from server');
+    }
+    if (!res.ok) {
+      const msg =
+        json && typeof json === 'object' && 'message' in json
+          ? String((json as { message: unknown }).message)
+          : text || res.statusText;
+      throw new Error(msg);
+    }
+    const payload = unwrapApiPayload(json) ?? (json as Record<string, unknown> | null);
+    if (!payload) {
+      return { items: [], total: 0 };
+    }
+    const rawItems = payload.items ?? payload.analyses ?? payload.data;
+    const items = Array.isArray(rawItems)
+      ? rawItems
+          .map((row): BatchAnalysisItem | null => {
+            if (!row || typeof row !== 'object') return null;
+            const o = row as Record<string, unknown>;
+            const content = String(o.content ?? '');
+            // Skip error responses like {"detail":"Not Found"}
+            if (content.includes('"detail"') || content === '{}' || content === '') return null;
+            return {
+              id: String(o.id ?? ''),
+              content,
+              created_at: String(o.created_at ?? ''),
+            };
+          })
+          .filter((x): x is BatchAnalysisItem => x != null)
+      : [];
+    const total = Number(payload.total ?? payload.count ?? items.length);
+    setAnalysesTotal(total);
+    if (mode === 'append') {
+      setAnalyses((prev) => [...prev, ...items]);
+    } else {
+      setAnalyses(items);
+    }
+    return { items, total };
+  }, [selectedProfileId]);
+
+  const loadMoreAnalyses = async () => {
+    if (analyses.length >= analysesTotal || analysesLoadingMore) return;
+    const nextPage = analysesPage + 1;
+    setAnalysesLoadingMore(true);
+    setAnalysesError(null);
+    try {
+      await fetchAnalysesPage(nextPage, 'append');
+      setAnalysesPage(nextPage);
+    } catch (e) {
+      setAnalysesError(e instanceof Error ? e.message : 'Failed to load more analyses');
+    } finally {
+      setAnalysesLoadingMore(false);
+    }
+  };
+
+  const fetchBatchAnalysisDetail = async (analysisId: string) => {
+    const gen = ++analysesFetchGen.current;
+    const ac = new AbortController();
+    setBatchAnalysisDetailLoading(true);
+    setBatchAnalysisDetailError(null);
+
+    try {
+      const res = await apiFetch(
+        sentenceAnalysisDetailPath(analysisId),
+        withProfileId(selectedProfileId, { method: 'GET', signal: ac.signal })
+      );
+      const text = await res.text();
+      let json: unknown;
+      try {
+        json = text ? JSON.parse(text) : null;
+      } catch {
+        throw new Error(text || 'Invalid JSON from server');
+      }
+      if (!res.ok) {
+        const msg =
+          json && typeof json === 'object' && 'message' in json
+            ? String((json as { message: unknown }).message)
+            : text || res.statusText;
+        throw new Error(msg);
+      }
+      const payload = unwrapApiPayload(json) ?? (json as Record<string, unknown> | null);
+      if (!payload) throw new Error('Empty response from server');
+
+      if (gen !== analysesFetchGen.current) return;
+
+      const detail: BatchAnalysisDetail = {
+        id: String(payload.id ?? analysisId),
+        content: String(payload.content ?? ''),
+        created_at: String(payload.created_at ?? ''),
+      };
+
+      setSelectedBatchAnalysis(detail);
+    } catch (e) {
+      if (gen !== analysesFetchGen.current) return;
+      const aborted =
+        (typeof e === 'object' &&
+          e !== null &&
+          'name' in e &&
+          (e as { name: string }).name === 'AbortError') ||
+        (e instanceof DOMException && e.name === 'AbortError');
+      if (!aborted) {
+        setBatchAnalysisDetailError(e instanceof Error ? e.message : 'Failed to load analysis detail');
+      }
+    } finally {
+      if (gen === analysesFetchGen.current) {
+        setBatchAnalysisDetailLoading(false);
+      }
+    }
+
+    return () => {
+      ac.abort();
+    };
+  };
+
+  // Load analyses when tab is active (initially or on profile change)
+  const loadAnalyses = useCallback(async () => {
+    setAnalysesLoading(true);
+    setAnalysesError(null);
+    setAnalysesPage(0);
+    try {
+      await fetchAnalysesPage(0, 'replace');
+    } catch (e) {
+      setAnalysesError(e instanceof Error ? e.message : 'Failed to load analyses');
+    } finally {
+      setAnalysesLoading(false);
+    }
+  }, [fetchAnalysesPage]);
+
+  // Initial load of analyses
+  useEffect(() => {
+    let cancelled = false;
+    setAnalyses([]);
+    setAnalysesTotal(0);
+    setAnalysesPage(0);
+    setAnalysesLoading(true);
+    setAnalysesError(null);
+    fetchAnalysesPage(0, 'replace')
+      .catch((e) => {
+        if (!cancelled) {
+          setAnalysesError(e instanceof Error ? e.message : 'Failed to load analyses');
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setAnalysesLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [fetchAnalysesPage]);
+
   const analyzeSentence = async () => {
     if (!sentence.trim()) return;
 
@@ -400,6 +620,69 @@ export function CorrectSentence() {
       setError(e instanceof Error ? e.message : 'Request failed');
     } finally {
       setIsAnalyzing(false);
+    }
+  };
+
+  const analyzeBatchSentences = async () => {
+    if (history.length === 0) return;
+
+    setIsBatchAnalyzing(true);
+    setBatchAnalysisError(null);
+    setBatchAnalysisResult(null);
+
+    try {
+      const res = await apiFetch(
+        API_ROUTES.analyzeSentences,
+        withProfileId(selectedProfileId, {
+          method: 'POST',
+          body: JSON.stringify({}),
+        })
+      );
+      const text = await res.text();
+      let json: unknown;
+      try {
+        json = text ? JSON.parse(text) : null;
+      } catch {
+        throw new Error(text || 'Invalid JSON from server');
+      }
+      if (!res.ok) {
+        const msg =
+          json && typeof json === 'object' && 'message' in json
+            ? String((json as { message: unknown }).message)
+            : text || res.statusText;
+        throw new Error(msg);
+      }
+      const payload = unwrapApiPayload(json) ?? (json as Record<string, unknown> | null);
+      if (!payload) throw new Error('Empty response from server');
+
+      // Extract summary from response
+      const summary = payload.summary ?? payload.analysis ?? payload.result ?? payload;
+      if (typeof summary === 'string') {
+        setBatchAnalysisResult(summary);
+      } else if (summary && typeof summary === 'object') {
+        setBatchAnalysisResult(JSON.stringify(summary, null, 2));
+      } else {
+        setBatchAnalysisResult('Analysis completed successfully.');
+      }
+
+      // Refresh history to get updated analyzed status
+      try {
+        await fetchHistoryPage(0, 'replace');
+      } catch {
+        /* list refresh failed; analysis still shown */
+      }
+
+      // Refresh analyses list
+      try {
+        await fetchAnalysesPage(0, 'replace');
+        setAnalysesPage(0);
+      } catch {
+        /* analyses refresh failed */
+      }
+    } catch (e) {
+      setBatchAnalysisError(e instanceof Error ? e.message : 'Batch analysis failed');
+    } finally {
+      setIsBatchAnalyzing(false);
     }
   };
 
@@ -467,12 +750,56 @@ export function CorrectSentence() {
               <History className="w-5 h-5 text-blue-600" />
               <h3>History</h3>
             </div>
-            {historyTotal > 0 && (
-              <span className="text-xs text-muted-foreground">
-                {history.length} / {historyTotal}
-              </span>
-            )}
+            <div className="flex items-center gap-2">
+              {historyTotal > 0 && (
+                <span className="text-xs text-muted-foreground">
+                  {history.length} / {historyTotal}
+                </span>
+              )}
+              <Button
+                onClick={analyzeBatchSentences}
+                disabled={history.length === 0 || isBatchAnalyzing}
+                variant="outline"
+                size="sm"
+                className="rounded-lg border-blue-200 hover:bg-blue-50 hover:border-blue-300"
+              >
+                {isBatchAnalyzing ? (
+                  <motion.div
+                    animate={{ rotate: 360 }}
+                    transition={{ duration: 1, repeat: Infinity, ease: 'linear' }}
+                    className="mr-1.5"
+                  >
+                    <BarChart3 className="w-4 h-4" />
+                  </motion.div>
+                ) : (
+                  <BarChart3 className="w-4 h-4 mr-1.5" />
+                )}
+                {isBatchAnalyzing ? 'Analyzing...' : 'Analyze All'}
+              </Button>
+            </div>
           </div>
+
+          {batchAnalysisError && (
+            <p className="text-sm text-red-600 mb-3" role="alert">
+              {batchAnalysisError}
+            </p>
+          )}
+
+          {batchAnalysisResult && (
+            <motion.div
+              initial={{ opacity: 0, y: -10 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="mb-4 p-4 bg-indigo-50 rounded-xl border border-indigo-200"
+            >
+              <div className="flex items-start gap-2 mb-2">
+                <BarChart3 className="w-5 h-5 text-indigo-600 mt-0.5 shrink-0" />
+                <span className="text-sm font-medium text-indigo-900">Batch Analysis Summary</span>
+              </div>
+              <pre className="text-xs text-gray-700 ml-7 whitespace-pre-wrap font-mono bg-white/50 p-2 rounded-lg">
+                {batchAnalysisResult}
+              </pre>
+            </motion.div>
+          )}
 
           {historyError && (
             <p className="text-sm text-red-600 mb-3" role="alert">
@@ -496,22 +823,40 @@ export function CorrectSentence() {
                     animate={{ opacity: 1, x: 0 }}
                     exit={{ opacity: 0, x: 20 }}
                     transition={{ delay: index * 0.05 }}
-                    onClick={() => setSelectedSentenceId(item.id)}
+                    onClick={() => {
+                      setSelectedBatchAnalysisId(null);
+                      setSelectedBatchAnalysis(null);
+                      setSelectedSentenceId(item.id);
+                    }}
                     className={`w-full text-left p-4 rounded-xl transition-all cursor-pointer ${
                       selectedSentenceId === item.id
                         ? 'bg-gradient-to-r from-blue-100 to-purple-100 border-2 border-blue-400 shadow-md'
                         : 'bg-gray-50 hover:bg-gray-100 border-2 border-transparent'
                     }`}
                   >
-                    <p className="text-sm text-gray-700 line-clamp-2">{item.original}</p>
-                    <p className="text-xs text-muted-foreground mt-1">
-                      {item.timestamp.toLocaleString([], {
-                        month: 'short',
-                        day: 'numeric',
-                        hour: '2-digit',
-                        minute: '2-digit',
-                      })}
-                    </p>
+                    <div className="flex items-start justify-between gap-2">
+                      <p className="text-sm text-gray-700 line-clamp-2 flex-1">
+                        {item.original}
+                      </p>
+                      {item.analyzed && (
+                        <div className="flex items-center gap-1 shrink-0 bg-blue-500 text-white px-2 py-1 rounded-full">
+                          <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
+                            <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                          </svg>
+                          <span className="text-[10px] font-semibold">Analyzed</span>
+                        </div>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-2 mt-1">
+                      <p className="text-xs text-muted-foreground">
+                        {item.timestamp.toLocaleString([], {
+                          month: 'short',
+                          day: 'numeric',
+                          hour: '2-digit',
+                          minute: '2-digit',
+                        })}
+                      </p>
+                    </div>
                   </motion.button>
                 ))}
               </AnimatePresence>
@@ -530,6 +875,114 @@ export function CorrectSentence() {
             </Button>
           )}
         </motion.div>
+
+        {/* Batch Analyses List */}
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.15 }}
+          className="bg-white rounded-2xl shadow-lg p-6"
+        >
+          <div className="flex items-center justify-between gap-2 mb-4">
+            <div className="flex items-center gap-2">
+              <BarChart3 className="w-5 h-5 text-indigo-600" />
+              <h3>Analysis Summaries</h3>
+            </div>
+            <div className="flex items-center gap-2">
+              {analysesTotal > 0 && (
+                <span className="text-xs text-muted-foreground">
+                  {analyses.length} / {analysesTotal}
+                </span>
+              )}
+              <Button
+                onClick={loadAnalyses}
+                variant="ghost"
+                size="sm"
+                disabled={analysesLoading}
+                className="rounded-lg"
+              >
+                {analysesLoading ? (
+                  <motion.div
+                    animate={{ rotate: 360 }}
+                    transition={{ duration: 1, repeat: Infinity, ease: 'linear' }}
+                  >
+                    <BarChart3 className="w-4 h-4" />
+                  </motion.div>
+                ) : (
+                  <BarChart3 className="w-4 h-4" />
+                )}
+              </Button>
+            </div>
+          </div>
+
+          {analysesError && (
+            <p className="text-sm text-red-600 mb-3" role="alert">
+              {analysesError}
+            </p>
+          )}
+
+          <div className="space-y-3 max-h-[300px] overflow-y-auto pr-2">
+            {analysesLoading && analyses.length === 0 ? (
+              <p className="text-sm text-muted-foreground text-center py-6">Loading analyses…</p>
+            ) : analyses.length === 0 ? (
+              <p className="text-sm text-muted-foreground text-center py-6">
+                No analysis summaries yet. Click &quot;Analyze All&quot; to create one.
+              </p>
+            ) : (
+              <AnimatePresence>
+                {analyses.map((item, index) => (
+                  <motion.button
+                    key={item.id}
+                    initial={{ opacity: 0, x: -20 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    exit={{ opacity: 0, x: 20 }}
+                    transition={{ delay: index * 0.05 }}
+                    onClick={() => {
+                      setSelectedSentenceId(null);
+                      setSelectedAnalysis(null);
+                      setSelectedBatchAnalysisId(item.id);
+                    }}
+                    className={`w-full text-left p-4 rounded-xl transition-all cursor-pointer ${
+                      selectedBatchAnalysisId === item.id
+                        ? 'bg-gradient-to-r from-indigo-100 to-purple-100 border-2 border-indigo-400 shadow-md'
+                        : 'bg-gray-50 hover:bg-gray-100 border-2 border-transparent'
+                    }`}
+                  >
+                    <p className="text-sm text-gray-700 line-clamp-2 font-medium">
+                      {item.content.split('\n')[0].replace(/^#+\s*/, '').slice(0, 100)}
+                      {item.content.length > 100 ? '...' : ''}
+                    </p>
+                    <div className="flex items-center gap-3 mt-2">
+                      <span className="text-xs text-muted-foreground">
+                        {new Date(item.created_at).toLocaleString([], {
+                          month: 'short',
+                          day: 'numeric',
+                          hour: '2-digit',
+                          minute: '2-digit',
+                        })}
+                      </span>
+                      <Badge variant="outline" className="text-[10px] text-indigo-600 border-indigo-200">
+                        Markdown
+                      </Badge>
+                    </div>
+                  </motion.button>
+                ))}
+              </AnimatePresence>
+            )}
+          </div>
+
+          {analyses.length < analysesTotal && !analysesLoading && (
+            <Button
+              type="button"
+              variant="outline"
+              className="w-full mt-3 rounded-xl"
+              disabled={analysesLoadingMore}
+              onClick={() => void loadMoreAnalyses()}
+            >
+              {analysesLoadingMore ? 'Loading…' : 'Load more'}
+            </Button>
+          )}
+        </motion.div>
       </div>
 
       <motion.div
@@ -538,7 +991,87 @@ export function CorrectSentence() {
         transition={{ delay: 0.2 }}
         className="bg-white rounded-2xl shadow-lg p-6"
       >
-        {selectedSentenceId && !selectedAnalysis && detailLoading ? (
+        {selectedBatchAnalysisId && !selectedBatchAnalysis && batchAnalysisDetailLoading ? (
+          <div className="flex flex-col items-center justify-center py-16 text-center">
+            <motion.div
+              animate={{ rotate: 360 }}
+              transition={{ duration: 1, repeat: Infinity, ease: 'linear' }}
+              className="mb-3"
+            >
+              <BarChart3 className="w-8 h-8 text-indigo-400" />
+            </motion.div>
+            <p className="text-sm text-muted-foreground">Loading analysis summary…</p>
+          </div>
+        ) : selectedBatchAnalysis ? (
+          <div className="space-y-4 relative">
+            {batchAnalysisDetailLoading && (
+              <p className="text-xs text-muted-foreground">Fetching full details from server…</p>
+            )}
+            {batchAnalysisDetailError && (
+              <p className="text-sm text-red-600" role="alert">
+                {batchAnalysisDetailError}
+              </p>
+            )}
+
+            <h3 className="text-lg font-semibold text-gray-900">Analysis Summary</h3>
+
+            <div className="p-4 bg-indigo-50 rounded-xl border border-indigo-200">
+              <div className="flex items-center gap-2 mb-3">
+                <BarChart3 className="w-5 h-5 text-indigo-600" />
+                <span className="text-sm font-medium text-indigo-900">Generated Analysis</span>
+              </div>
+              <div className="text-xs text-muted-foreground mb-2">
+                {new Date(selectedBatchAnalysis.created_at).toLocaleString()}
+              </div>
+            </div>
+
+            <div className="p-4 bg-white rounded-xl border border-gray-200 prose prose-sm max-w-none">
+              <Markdown
+                remarkPlugins={[remarkGfm]}
+                components={{
+                  h1: ({ children }) => <h1 className="text-xl font-bold text-gray-900 mb-4">{children}</h1>,
+                  h2: ({ children }) => <h2 className="text-lg font-semibold text-gray-800 mb-3 mt-4">{children}</h2>,
+                  h3: ({ children }) => <h3 className="text-base font-medium text-gray-700 mb-2 mt-3">{children}</h3>,
+                  p: ({ children }) => <p className="text-sm text-gray-700 mb-2 leading-relaxed">{children}</p>,
+                  ul: ({ children }) => <ul className="list-disc list-inside mb-3 text-sm text-gray-700">{children}</ul>,
+                  ol: ({ children }) => <ol className="list-decimal list-inside mb-3 text-sm text-gray-700">{children}</ol>,
+                  li: ({ children }) => <li className="mb-1">{children}</li>,
+                  code: ({ children }) => (
+                    <code className="bg-gray-100 text-gray-800 px-1 py-0.5 rounded text-xs font-mono">{children}</code>
+                  ),
+                  pre: ({ children }) => (
+                    <pre className="bg-gray-100 p-3 rounded-lg overflow-x-auto mb-3">{children}</pre>
+                  ),
+                  blockquote: ({ children }) => (
+                    <blockquote className="border-l-4 border-indigo-300 pl-3 italic text-gray-600 mb-3">{children}</blockquote>
+                  ),
+                  strong: ({ children }) => <strong className="font-semibold text-gray-900">{children}</strong>,
+                  em: ({ children }) => <em className="italic text-gray-700">{children}</em>,
+                  table: ({ children }) => (
+                    <table className="w-full border-collapse mb-3 text-sm">{children}</table>
+                  ),
+                  thead: ({ children }) => (
+                    <thead className="bg-gray-100">{children}</thead>
+                  ),
+                  tbody: ({ children }) => (
+                    <tbody>{children}</tbody>
+                  ),
+                  tr: ({ children }) => (
+                    <tr className="border-b border-gray-200">{children}</tr>
+                  ),
+                  th: ({ children }) => (
+                    <th className="text-left px-3 py-2 font-semibold text-gray-800">{children}</th>
+                  ),
+                  td: ({ children }) => (
+                    <td className="px-3 py-2 text-gray-700">{children}</td>
+                  ),
+                }}
+              >
+                {selectedBatchAnalysis.content}
+              </Markdown>
+            </div>
+          </div>
+        ) : selectedSentenceId && !selectedAnalysis && detailLoading ? (
           <div className="flex flex-col items-center justify-center py-16 text-center">
             <motion.div
               animate={{ rotate: 360 }}
@@ -780,9 +1313,9 @@ export function CorrectSentence() {
             <div className="w-16 h-16 bg-gray-100 rounded-2xl flex items-center justify-center mb-4">
               <Sparkles className="w-8 h-8 text-gray-400" />
             </div>
-            <h3 className="text-gray-400 mb-2">No Analysis Yet</h3>
+            <h3 className="text-gray-400 mb-2">No Analysis Selected</h3>
             <p className="text-sm text-muted-foreground">
-              Select a history item or analyze a new sentence
+              Select a history item, analysis summary, or analyze a new sentence
             </p>
           </div>
         )}
