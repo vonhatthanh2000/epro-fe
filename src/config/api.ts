@@ -10,6 +10,8 @@ export const API_ROUTES = {
   analyzeSentences: '/sentence/analyze',
   sentenceAnalyses: '/sentence/analyses',
   gradeWriting: '/writing/grade',
+  youtubeAnalyze: '/youtube/analyze',
+  youtubeHistory: '/youtube/history',
   profiles: '/profiles',
 } as const;
 
@@ -30,6 +32,11 @@ export function profileDetailPath(profileId: string): string {
 /** GET one sentence analysis by id: `/sentence/{sentence_id}` */
 export function sentenceDetailPath(sentenceId: string): string {
   return `/sentence/${encodeURIComponent(sentenceId)}`;
+}
+
+/** GET one YouTube analysis by id: `/youtube/{analysis_id}` */
+export function youtubeAnalysisDetailPath(analysisId: string): string {
+  return `/youtube/${encodeURIComponent(analysisId)}`;
 }
 
 function trimTrailingSlashes(url: string): string {
