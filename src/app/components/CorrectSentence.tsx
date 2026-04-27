@@ -60,14 +60,59 @@ interface SentenceAnalysis {
   isHistorySummary?: boolean;
 }
 
+interface ExecutiveSummary {
+  sentences_analyzed: number;
+  mistakes_found: number;
+  improvements_suggested: number;
+  overall_assessment: string;
+}
+
+interface MistakeExample {
+  original: string;
+  correction: string;
+  explanation: string;
+}
+
+interface MistakeCategory {
+  category: string;
+  frequency: string;
+  description: string;
+  examples: MistakeExample[];
+  how_to_fix: string;
+}
+
+interface ImprovementSuggestion {
+  benefit: string;
+  context: string;
+  improved_phrase: string;
+  original_phrase: string;
+}
+
+interface ImprovementOpportunity {
+  theme: string;
+  suggestions: ImprovementSuggestion[];
+}
+
+interface BatchAnalysisData {
+  executive_summary: ExecutiveSummary;
+  mistake_categories: MistakeCategory[];
+  improvement_opportunities: ImprovementOpportunity[];
+  key_takeaways: string[];
+  action_items: string[];
+  next_steps: {
+    message: string;
+    focus_area: string;
+  };
+}
+
 interface BatchAnalysisItem {
   id: string;
-  content: string;
+  analysis?: BatchAnalysisData;
   created_at: string;
 }
 
 interface BatchAnalysisDetail extends BatchAnalysisItem {
-  content: string;
+  analysis?: BatchAnalysisData;
 }
 
 function parseTimestamp(data: Record<string, unknown>): Date {
@@ -78,6 +123,109 @@ function parseTimestamp(data: Record<string, unknown>): Date {
     if (!Number.isNaN(d.getTime())) return d;
   }
   return new Date();
+}
+
+function parseExecutiveSummary(data: Record<string, unknown>): ExecutiveSummary {
+  return {
+    sentences_analyzed: Number(data.sentences_analyzed ?? 0),
+    mistakes_found: Number(data.mistakes_found ?? 0),
+    improvements_suggested: Number(data.improvements_suggested ?? 0),
+    overall_assessment: String(data.overall_assessment ?? ''),
+  };
+}
+
+function parseMistakeExample(data: Record<string, unknown>): MistakeExample {
+  return {
+    original: String(data.original ?? ''),
+    correction: String(data.correction ?? ''),
+    explanation: String(data.explanation ?? ''),
+  };
+}
+
+function parseMistakeCategory(data: Record<string, unknown>): MistakeCategory {
+  const examplesRaw = data.examples;
+  const examples = Array.isArray(examplesRaw)
+    ? examplesRaw.map((ex) => parseMistakeExample(ex as Record<string, unknown>))
+    : [];
+  return {
+    category: String(data.category ?? ''),
+    frequency: String(data.frequency ?? ''),
+    description: String(data.description ?? ''),
+    examples,
+    how_to_fix: String(data.how_to_fix ?? ''),
+  };
+}
+
+function parseImprovementSuggestion(data: Record<string, unknown>): ImprovementSuggestion {
+  return {
+    benefit: String(data.benefit ?? ''),
+    context: String(data.context ?? ''),
+    improved_phrase: String(data.improved_phrase ?? ''),
+    original_phrase: String(data.original_phrase ?? ''),
+  };
+}
+
+function parseImprovementOpportunity(data: Record<string, unknown>): ImprovementOpportunity {
+  const suggestionsRaw = data.suggestions;
+  const suggestions = Array.isArray(suggestionsRaw)
+    ? suggestionsRaw.map((sugg) => parseImprovementSuggestion(sugg as Record<string, unknown>))
+    : [];
+  return {
+    theme: String(data.theme ?? ''),
+    suggestions,
+  };
+}
+
+function parseNextSteps(data: Record<string, unknown>): { message: string; focus_area: string } {
+  return {
+    message: String(data.message ?? ''),
+    focus_area: String(data.focus_area ?? ''),
+  };
+}
+
+function parseAnalysisData(data: Record<string, unknown>): BatchAnalysisData | undefined {
+  const analysisRaw = data.analysis ?? data;
+  if (!analysisRaw || typeof analysisRaw !== 'object') return undefined;
+  const analysis = analysisRaw as Record<string, unknown>;
+
+  const execSummaryRaw = analysis.executive_summary;
+  const execSummary = execSummaryRaw && typeof execSummaryRaw === 'object'
+    ? parseExecutiveSummary(execSummaryRaw as Record<string, unknown>)
+    : { sentences_analyzed: 0, mistakes_found: 0, improvements_suggested: 0, overall_assessment: '' };
+
+  const mistakeCatsRaw = analysis.mistake_categories;
+  const mistakeCategories = Array.isArray(mistakeCatsRaw)
+    ? mistakeCatsRaw.map((m) => parseMistakeCategory(m as Record<string, unknown>))
+    : [];
+
+  const improvementOppRaw = analysis.improvement_opportunities;
+  const improvementOpportunities = Array.isArray(improvementOppRaw)
+    ? improvementOppRaw.map((i) => parseImprovementOpportunity(i as Record<string, unknown>))
+    : [];
+
+  const keyTakeawaysRaw = analysis.key_takeaways;
+  const keyTakeaways = Array.isArray(keyTakeawaysRaw)
+    ? keyTakeawaysRaw.map(String)
+    : [];
+
+  const actionItemsRaw = analysis.action_items;
+  const actionItems = Array.isArray(actionItemsRaw)
+    ? actionItemsRaw.map(String)
+    : [];
+
+  const nextStepsRaw = analysis.next_steps;
+  const nextSteps = nextStepsRaw && typeof nextStepsRaw === 'object'
+    ? parseNextSteps(nextStepsRaw as Record<string, unknown>)
+    : { message: '', focus_area: '' };
+
+  return {
+    executive_summary: execSummary,
+    mistake_categories: mistakeCategories,
+    improvement_opportunities: improvementOpportunities,
+    key_takeaways: keyTakeaways,
+    action_items: actionItems,
+    next_steps: nextSteps,
+  };
 }
 
 function parseMistakeEntry(raw: unknown): MistakeItem | null {
@@ -224,7 +372,6 @@ export function CorrectSentence() {
   const [detailTab, setDetailTab] = useState<DetailTab>('analysis');
   const [isBatchAnalyzing, setIsBatchAnalyzing] = useState(false);
   const [batchAnalysisError, setBatchAnalysisError] = useState<string | null>(null);
-  const [batchAnalysisResult, setBatchAnalysisResult] = useState<string | null>(null);
 
   // Analyses list state
   const [analyses, setAnalyses] = useState<BatchAnalysisItem[]>([]);
@@ -445,12 +592,39 @@ export function CorrectSentence() {
           .map((row): BatchAnalysisItem | null => {
             if (!row || typeof row !== 'object') return null;
             const o = row as Record<string, unknown>;
-            const content = String(o.content ?? '');
-            // Skip error responses like {"detail":"Not Found"}
-            if (content.includes('"detail"') || content === '{}' || content === '') return null;
+
+            // Check if data is flat (list view) or nested (detail view)
+            const hasFlatStructure = o.sentences_analyzed !== undefined || o.mistakes_found !== undefined;
+            const hasNestedStructure = o.analysis_data !== undefined || o.analysis !== undefined;
+
+            let analysis: BatchAnalysisData | undefined;
+
+            if (hasFlatStructure) {
+              // Parse flat structure from list view
+              analysis = {
+                executive_summary: {
+                  sentences_analyzed: Number(o.sentences_analyzed ?? 0),
+                  mistakes_found: Number(o.mistakes_found ?? 0),
+                  improvements_suggested: Number(o.improvements_suggested ?? 0),
+                  overall_assessment: String(o.overall_assessment ?? ''),
+                },
+                mistake_categories: [], // Not provided in list view
+                improvement_opportunities: [], // Not provided in list view
+                key_takeaways: [], // Not provided in list view
+                action_items: [], // Not provided in list view
+                next_steps: { message: '', focus_area: '' }, // Not provided in list view
+              };
+            } else if (hasNestedStructure) {
+              // Parse nested structure from detail view
+              const analysisData = o.analysis_data ?? o.analysis ?? o.data;
+              if (analysisData && typeof analysisData === 'object') {
+                analysis = parseAnalysisData(analysisData as Record<string, unknown>);
+              }
+            }
+
             return {
               id: String(o.id ?? ''),
-              content,
+              analysis,
               created_at: String(o.created_at ?? ''),
             };
           })
@@ -513,7 +687,7 @@ export function CorrectSentence() {
 
       const detail: BatchAnalysisDetail = {
         id: String(payload.id ?? analysisId),
-        content: String(payload.content ?? ''),
+        analysis: parseAnalysisData(payload),
         created_at: String(payload.created_at ?? ''),
       };
 
@@ -628,7 +802,6 @@ export function CorrectSentence() {
 
     setIsBatchAnalyzing(true);
     setBatchAnalysisError(null);
-    setBatchAnalysisResult(null);
 
     try {
       const res = await apiFetch(
@@ -655,27 +828,28 @@ export function CorrectSentence() {
       const payload = unwrapApiPayload(json) ?? (json as Record<string, unknown> | null);
       if (!payload) throw new Error('Empty response from server');
 
-      // Extract summary from response
-      const summary = payload.summary ?? payload.analysis ?? payload.result ?? payload;
-      if (typeof summary === 'string') {
-        setBatchAnalysisResult(summary);
-      } else if (summary && typeof summary === 'object') {
-        setBatchAnalysisResult(JSON.stringify(summary, null, 2));
-      } else {
-        setBatchAnalysisResult('Analysis completed successfully.');
-      }
+      // Get the new analysis ID from response if available
+      const newAnalysisId = payload.id ? String(payload.id) : null;
 
       // Refresh history to get updated analyzed status
       try {
         await fetchHistoryPage(0, 'replace');
       } catch {
-        /* list refresh failed; analysis still shown */
+        /* list refresh failed */
       }
 
-      // Refresh analyses list
+      // Refresh analyses list and select the new analysis
       try {
-        await fetchAnalysesPage(0, 'replace');
+        const result = await fetchAnalysesPage(0, 'replace');
         setAnalysesPage(0);
+
+        // Auto-select the newly created analysis
+        if (newAnalysisId) {
+          setSelectedBatchAnalysisId(newAnalysisId);
+        } else if (result.items.length > 0) {
+          // If no ID in response, select the first (newest) analysis
+          setSelectedBatchAnalysisId(result.items[0].id);
+        }
       } catch {
         /* analyses refresh failed */
       }
@@ -783,22 +957,6 @@ export function CorrectSentence() {
             <p className="text-sm text-red-600 mb-3" role="alert">
               {batchAnalysisError}
             </p>
-          )}
-
-          {batchAnalysisResult && (
-            <motion.div
-              initial={{ opacity: 0, y: -10 }}
-              animate={{ opacity: 1, y: 0 }}
-              className="mb-4 p-4 bg-indigo-50 rounded-xl border border-indigo-200"
-            >
-              <div className="flex items-start gap-2 mb-2">
-                <BarChart3 className="w-5 h-5 text-indigo-600 mt-0.5 shrink-0" />
-                <span className="text-sm font-medium text-indigo-900">Batch Analysis Summary</span>
-              </div>
-              <pre className="text-xs text-gray-700 ml-7 whitespace-pre-wrap font-mono bg-white/50 p-2 rounded-lg">
-                {batchAnalysisResult}
-              </pre>
-            </motion.div>
           )}
 
           {historyError && (
@@ -949,8 +1107,8 @@ export function CorrectSentence() {
                     }`}
                   >
                     <p className="text-sm text-gray-700 line-clamp-2 font-medium">
-                      {item.content.split('\n')[0].replace(/^#+\s*/, '').slice(0, 100)}
-                      {item.content.length > 100 ? '...' : ''}
+                      {item.analysis?.executive_summary?.overall_assessment?.slice(0, 100) || 'Batch Analysis'}
+                      {(item.analysis?.executive_summary?.overall_assessment?.length || 0) > 100 ? '...' : ''}
                     </p>
                     <div className="flex items-center gap-3 mt-2">
                       <span className="text-xs text-muted-foreground">
@@ -961,9 +1119,18 @@ export function CorrectSentence() {
                           minute: '2-digit',
                         })}
                       </span>
-                      <Badge variant="outline" className="text-[10px] text-indigo-600 border-indigo-200">
-                        Markdown
-                      </Badge>
+                      {item.analysis && (
+                        <div className="flex items-center gap-1">
+                          <Badge variant="outline" className="text-[10px] text-indigo-600 border-indigo-200">
+                            {item.analysis.executive_summary.sentences_analyzed} sentences
+                          </Badge>
+                          {item.analysis.mistake_categories.length > 0 && (
+                            <Badge variant="outline" className="text-[10px] text-red-600 border-red-200">
+                              {item.analysis.mistake_categories.length} issues
+                            </Badge>
+                          )}
+                        </div>
+                      )}
                     </div>
                   </motion.button>
                 ))}
@@ -1015,61 +1182,189 @@ export function CorrectSentence() {
 
             <h3 className="text-lg font-semibold text-gray-900">Analysis Summary</h3>
 
-            <div className="p-4 bg-indigo-50 rounded-xl border border-indigo-200">
-              <div className="flex items-center gap-2 mb-3">
-                <BarChart3 className="w-5 h-5 text-indigo-600" />
-                <span className="text-sm font-medium text-indigo-900">Generated Analysis</span>
-              </div>
-              <div className="text-xs text-muted-foreground mb-2">
-                {new Date(selectedBatchAnalysis.created_at).toLocaleString()}
-              </div>
-            </div>
+            {selectedBatchAnalysis.analysis ? (
+              <div className="space-y-4">
+                {/* Executive Summary */}
+                <div className="p-4 bg-indigo-50 rounded-xl border border-indigo-200">
+                  <div className="flex items-center gap-2 mb-3">
+                    <BarChart3 className="w-5 h-5 text-indigo-600" />
+                    <span className="text-sm font-medium text-indigo-900">Executive Summary</span>
+                  </div>
+                  <div className="grid grid-cols-3 gap-3 mb-3">
+                    <div className="bg-white rounded-lg p-2 text-center">
+                      <div className="text-2xl font-bold text-indigo-600">
+                        {selectedBatchAnalysis.analysis.executive_summary.sentences_analyzed}
+                      </div>
+                      <div className="text-xs text-gray-600">Sentences</div>
+                    </div>
+                    <div className="bg-white rounded-lg p-2 text-center">
+                      <div className="text-2xl font-bold text-red-600">
+                        {selectedBatchAnalysis.analysis.executive_summary.mistakes_found}
+                      </div>
+                      <div className="text-xs text-gray-600">Mistakes</div>
+                    </div>
+                    <div className="bg-white rounded-lg p-2 text-center">
+                      <div className="text-2xl font-bold text-green-600">
+                        {selectedBatchAnalysis.analysis.executive_summary.improvements_suggested}
+                      </div>
+                      <div className="text-xs text-gray-600">Improvements</div>
+                    </div>
+                  </div>
+                  <p className="text-sm text-gray-700 bg-white p-3 rounded-lg">
+                    {selectedBatchAnalysis.analysis.executive_summary.overall_assessment}
+                  </p>
+                </div>
 
-            <div className="p-4 bg-white rounded-xl border border-gray-200 prose prose-sm max-w-none">
-              <Markdown
-                remarkPlugins={[remarkGfm]}
-                components={{
-                  h1: ({ children }) => <h1 className="text-xl font-bold text-gray-900 mb-4">{children}</h1>,
-                  h2: ({ children }) => <h2 className="text-lg font-semibold text-gray-800 mb-3 mt-4">{children}</h2>,
-                  h3: ({ children }) => <h3 className="text-base font-medium text-gray-700 mb-2 mt-3">{children}</h3>,
-                  p: ({ children }) => <p className="text-sm text-gray-700 mb-2 leading-relaxed">{children}</p>,
-                  ul: ({ children }) => <ul className="list-disc list-inside mb-3 text-sm text-gray-700">{children}</ul>,
-                  ol: ({ children }) => <ol className="list-decimal list-inside mb-3 text-sm text-gray-700">{children}</ol>,
-                  li: ({ children }) => <li className="mb-1">{children}</li>,
-                  code: ({ children }) => (
-                    <code className="bg-gray-100 text-gray-800 px-1 py-0.5 rounded text-xs font-mono">{children}</code>
-                  ),
-                  pre: ({ children }) => (
-                    <pre className="bg-gray-100 p-3 rounded-lg overflow-x-auto mb-3">{children}</pre>
-                  ),
-                  blockquote: ({ children }) => (
-                    <blockquote className="border-l-4 border-indigo-300 pl-3 italic text-gray-600 mb-3">{children}</blockquote>
-                  ),
-                  strong: ({ children }) => <strong className="font-semibold text-gray-900">{children}</strong>,
-                  em: ({ children }) => <em className="italic text-gray-700">{children}</em>,
-                  table: ({ children }) => (
-                    <table className="w-full border-collapse mb-3 text-sm">{children}</table>
-                  ),
-                  thead: ({ children }) => (
-                    <thead className="bg-gray-100">{children}</thead>
-                  ),
-                  tbody: ({ children }) => (
-                    <tbody>{children}</tbody>
-                  ),
-                  tr: ({ children }) => (
-                    <tr className="border-b border-gray-200">{children}</tr>
-                  ),
-                  th: ({ children }) => (
-                    <th className="text-left px-3 py-2 font-semibold text-gray-800">{children}</th>
-                  ),
-                  td: ({ children }) => (
-                    <td className="px-3 py-2 text-gray-700">{children}</td>
-                  ),
-                }}
-              >
-                {selectedBatchAnalysis.content}
-              </Markdown>
-            </div>
+                {/* Mistake Categories */}
+                {selectedBatchAnalysis.analysis.mistake_categories.length > 0 && (
+                  <div className="p-4 bg-red-50 rounded-xl border border-red-200">
+                    <div className="flex items-center gap-2 mb-3">
+                      <AlertCircle className="w-5 h-5 text-red-600" />
+                      <span className="text-sm font-medium text-red-900">Mistake Categories</span>
+                    </div>
+                    <div className="space-y-3">
+                      {selectedBatchAnalysis.analysis.mistake_categories.map((category, idx) => (
+                        <div key={idx} className="bg-white rounded-lg p-3">
+                          <div className="flex items-center justify-between mb-2">
+                            <span className="font-semibold text-gray-900">{category.category}</span>
+                            <Badge
+                              variant={
+                                category.frequency === 'high'
+                                  ? 'destructive'
+                                  : category.frequency === 'medium'
+                                    ? 'default'
+                                    : 'secondary'
+                              }
+                              className={
+                                category.frequency === 'medium'
+                                  ? 'bg-amber-100 text-amber-800 hover:bg-amber-100 border-amber-200'
+                                  : ''
+                              }
+                            >
+                              {category.frequency}
+                            </Badge>
+                          </div>
+                          <p className="text-sm text-gray-700 mb-2">{category.description}</p>
+                          {category.examples.length > 0 && (
+                            <div className="mb-3">
+                              <span className="text-xs font-medium text-gray-600">Examples:</span>
+                              <div className="space-y-2 mt-2">
+                                {category.examples.map((ex, i) => (
+                                  <div key={i} className="bg-gray-50 rounded-lg p-3 border border-gray-200">
+                                    <div className="flex items-start gap-2 mb-1">
+                                      <span className="text-sm text-red-700 line-through">{ex.original}</span>
+                                      <span className="text-sm text-gray-400">→</span>
+                                      <span className="text-sm text-green-700 font-medium">{ex.correction}</span>
+                                    </div>
+                                    <p className="text-xs text-gray-600 mt-1">{ex.explanation}</p>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                          <p className="text-sm text-blue-700">
+                            <span className="font-medium">How to fix:</span> {category.how_to_fix}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Improvement Opportunities */}
+                {selectedBatchAnalysis.analysis.improvement_opportunities.length > 0 && (
+                  <div className="p-4 bg-green-50 rounded-xl border border-green-200">
+                    <div className="flex items-center gap-2 mb-3">
+                      <TrendingUp className="w-5 h-5 text-green-600" />
+                      <span className="text-sm font-medium text-green-900">Improvement Opportunities</span>
+                    </div>
+                    <div className="space-y-4">
+                      {selectedBatchAnalysis.analysis.improvement_opportunities.map((opp, idx) => (
+                        <div key={idx} className="bg-white rounded-lg p-4">
+                          <span className="font-semibold text-gray-900">{opp.theme}</span>
+                          {opp.suggestions.length > 0 && (
+                            <div className="space-y-2 mt-3">
+                              {opp.suggestions.map((sugg, i) => (
+                                <div key={i} className="bg-gray-50 rounded-lg p-3 border border-gray-200">
+                                  <div className="flex items-start gap-2 mb-2">
+                                    <span className="text-sm text-gray-700">{sugg.original_phrase}</span>
+                                    <span className="text-sm text-gray-400">→</span>
+                                    <span className="text-sm text-green-700 font-medium">{sugg.improved_phrase}</span>
+                                  </div>
+                                  <div className="flex flex-wrap gap-2 text-xs">
+                                    <span className="bg-blue-50 text-blue-700 px-2 py-1 rounded">
+                                      Context: {sugg.context}
+                                    </span>
+                                    <span className="bg-green-50 text-green-700 px-2 py-1 rounded">
+                                      {sugg.benefit}
+                                    </span>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Key Takeaways */}
+                {selectedBatchAnalysis.analysis.key_takeaways.length > 0 && (
+                  <div className="p-4 bg-amber-50 rounded-xl border border-amber-200">
+                    <div className="flex items-center gap-2 mb-3">
+                      <Lightbulb className="w-5 h-5 text-amber-600" />
+                      <span className="text-sm font-medium text-amber-900">Key Takeaways</span>
+                    </div>
+                    <ul className="list-disc list-inside text-sm text-gray-700 space-y-1">
+                      {selectedBatchAnalysis.analysis.key_takeaways.map((takeaway, idx) => (
+                        <li key={idx}>{takeaway}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
+                {/* Action Items */}
+                {selectedBatchAnalysis.analysis.action_items.length > 0 && (
+                  <div className="p-4 bg-blue-50 rounded-xl border border-blue-200">
+                    <div className="flex items-center gap-2 mb-3">
+                      <CheckCircle className="w-5 h-5 text-blue-600" />
+                      <span className="text-sm font-medium text-blue-900">Action Items</span>
+                    </div>
+                    <ul className="list-disc list-inside text-sm text-gray-700 space-y-1">
+                      {selectedBatchAnalysis.analysis.action_items.map((item, idx) => (
+                        <li key={idx}>{item}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
+                {/* Next Steps */}
+                {(selectedBatchAnalysis.analysis.next_steps.message || selectedBatchAnalysis.analysis.next_steps.focus_area) && (
+                  <div className="p-4 bg-purple-50 rounded-xl border border-purple-200">
+                    <div className="flex items-center gap-2 mb-3">
+                      <Sparkles className="w-5 h-5 text-purple-600" />
+                      <span className="text-sm font-medium text-purple-900">Next Steps</span>
+                    </div>
+                    {selectedBatchAnalysis.analysis.next_steps.message && (
+                      <p className="text-sm text-gray-700 mb-2">{selectedBatchAnalysis.analysis.next_steps.message}</p>
+                    )}
+                    {selectedBatchAnalysis.analysis.next_steps.focus_area && (
+                      <p className="text-sm text-purple-700">
+                        <span className="font-medium">Focus Area:</span> {selectedBatchAnalysis.analysis.next_steps.focus_area}
+                      </p>
+                    )}
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div className="p-4 bg-gray-50 rounded-xl border border-gray-200">
+                <p className="text-sm text-gray-600">No analysis data available.</p>
+                <p className="text-xs text-muted-foreground mt-1">
+                  Created: {new Date(selectedBatchAnalysis.created_at).toLocaleString()}
+                </p>
+              </div>
+            )}
           </div>
         ) : selectedSentenceId && !selectedAnalysis && detailLoading ? (
           <div className="flex flex-col items-center justify-center py-16 text-center">
