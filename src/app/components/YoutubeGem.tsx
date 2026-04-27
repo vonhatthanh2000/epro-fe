@@ -422,8 +422,8 @@ export function YoutubeGem() {
   };
 
   return (
-    <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
-      <div className="space-y-6 xl:col-span-1">
+    <div className="grid grid-cols-1 xl:grid-cols-5 gap-6">
+      <div className="space-y-6 xl:col-span-2">
         {/* URL Input */}
         <motion.div
           initial={{ opacity: 0, y: 20 }}
@@ -549,7 +549,7 @@ export function YoutubeGem() {
         initial={{ opacity: 0, x: 20 }}
         animate={{ opacity: 1, x: 0 }}
         transition={{ delay: 0.2 }}
-        className="bg-white rounded-2xl shadow-lg p-6 xl:col-span-2"
+        className="bg-white rounded-2xl shadow-lg p-6 xl:col-span-3"
       >
         {selectedHistoryId && !analysis && historyDetailLoading ? (
           <div className="flex flex-col items-center justify-center py-16 text-center">

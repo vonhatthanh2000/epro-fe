@@ -861,8 +861,8 @@ export function CorrectSentence() {
   };
 
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-      <div className="space-y-6">
+    <div className="grid grid-cols-1 xl:grid-cols-5 gap-6">
+      <div className="space-y-6 xl:col-span-2">
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
@@ -1156,7 +1156,7 @@ export function CorrectSentence() {
         initial={{ opacity: 0, x: 20 }}
         animate={{ opacity: 1, x: 0 }}
         transition={{ delay: 0.2 }}
-        className="bg-white rounded-2xl shadow-lg p-6"
+        className="bg-white rounded-2xl shadow-lg p-6 xl:col-span-3"
       >
         {selectedBatchAnalysisId && !selectedBatchAnalysis && batchAnalysisDetailLoading ? (
           <div className="flex flex-col items-center justify-center py-16 text-center">

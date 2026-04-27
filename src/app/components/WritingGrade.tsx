@@ -90,12 +90,12 @@ export function WritingGrade() {
   };
 
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+    <div className="grid grid-cols-1 xl:grid-cols-5 gap-6">
       {/* Left Side - Input */}
       <motion.div
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
-        className="bg-white rounded-2xl shadow-lg p-6 h-fit"
+        className="bg-white rounded-2xl shadow-lg p-6 h-fit xl:col-span-2"
       >
         <div className="flex items-center gap-2 mb-4">
           <div className="w-8 h-8 bg-gradient-to-br from-pink-400 to-orange-400 rounded-lg flex items-center justify-center">
@@ -151,7 +151,7 @@ export function WritingGrade() {
         initial={{ opacity: 0, x: 20 }}
         animate={{ opacity: 1, x: 0 }}
         transition={{ delay: 0.1 }}
-        className="bg-white rounded-2xl shadow-lg p-6"
+        className="bg-white rounded-2xl shadow-lg p-6 xl:col-span-3"
       >
         {analysis ? (
           <div className="space-y-6">
