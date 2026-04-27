@@ -5,6 +5,7 @@ export const API_ROUTES = {
   login: '/auth/login',
   register: '/auth/register',
   me: '/users/me',
+  switchProfile: '/auth/switch-profile',
   correctSentence: '/sentence/correct',
   sentenceHistory: '/sentence/history',
   analyzeSentences: '/sentence/analyze',
@@ -61,21 +62,17 @@ export function apiUrl(path: string): string {
   return base ? `${base}${p}` : p;
 }
 
-/** Sentence / writing / history endpoints may scope data per learning profile. */
-export const PROFILE_ID_HEADER = 'X-Profile-Id';
-
 /**
- * Merge `X-Profile-Id` into request `init` when `profileId` is set.
+ * Legacy: Previously used to add X-Profile-Id header.
+ * Now profile is handled via token switching (auth/switch-profile).
+ * This function is kept for backwards compatibility but no longer adds headers.
  */
 export function withProfileId(
-  profileId: string | null | undefined,
+  _profileId: string | null | undefined,
   init: RequestInit = {}
 ): RequestInit {
-  const headers = new Headers(init.headers);
-  if (profileId) {
-    headers.set(PROFILE_ID_HEADER, profileId);
-  }
-  return { ...init, headers };
+  // Profile is now handled via token switching, no need for header
+  return init;
 }
 
 /** localStorage key for the JWT / access token from login & register. */

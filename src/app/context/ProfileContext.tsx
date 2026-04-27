@@ -13,6 +13,7 @@ import {
   API_ROUTES,
   apiFetch,
   getStoredToken,
+  setStoredToken,
   profileDetailPath,
   unwrapApiPayload,
 } from '../../config/api';
@@ -183,6 +184,32 @@ async function deleteProfileRequest(id: string): Promise<void> {
   }
 }
 
+async function switchProfileRequest(profileId: string): Promise<string | null> {
+  const res = await apiFetch(API_ROUTES.switchProfile, {
+    method: 'POST',
+    body: JSON.stringify({ profile_id: profileId }),
+  });
+  const text = await res.text();
+  let json: unknown;
+  try {
+    json = text ? JSON.parse(text) : null;
+  } catch {
+    throw new Error(text || 'Invalid JSON from server');
+  }
+  if (!res.ok) {
+    const msg =
+      json && typeof json === 'object' && 'message' in json
+        ? String((json as { message: unknown }).message)
+        : text || res.statusText;
+    throw new Error(msg);
+  }
+  const payload = unwrapApiPayload(json) ?? (json as Record<string, unknown> | null);
+  if (!payload) return null;
+  // Return the new access token
+  const token = payload.access_token ?? payload.token;
+  return token ? String(token) : null;
+}
+
 interface ProfileContextType {
   profiles: LearningProfile[];
   selectedProfileId: string | null;
@@ -229,7 +256,18 @@ export function ProfileProvider({ children }: { children: ReactNode }) {
     const valid = saved && list.some((p) => p.id === saved);
     const sel = valid ? saved : list[0]?.id ?? null;
     setSelectedProfileId(sel);
-    if (sel) saveSelectedId(key, sel);
+    if (sel) {
+      saveSelectedId(key, sel);
+      // Call switch-profile to get a token scoped to this profile
+      try {
+        const newToken = await switchProfileRequest(sel);
+        if (newToken) {
+          setStoredToken(newToken);
+        }
+      } catch (e) {
+        console.error('Failed to switch profile:', e);
+      }
+    }
   }, [user]);
 
   useEffect(() => {
@@ -253,7 +291,18 @@ export function ProfileProvider({ children }: { children: ReactNode }) {
         const valid = saved && list.some((p) => p.id === saved);
         const sel = valid ? saved : list[0]?.id ?? null;
         setSelectedProfileId(sel);
-        if (sel) saveSelectedId(accountKey, sel);
+        if (sel) {
+          saveSelectedId(accountKey, sel);
+          // Call switch-profile to get a token scoped to this profile
+          try {
+            const newToken = await switchProfileRequest(sel);
+            if (newToken) {
+              setStoredToken(newToken);
+            }
+          } catch (e) {
+            console.error('Failed to switch profile:', e);
+          }
+        }
       } catch (e) {
         if (!cancelled) {
           setProfiles([]);
@@ -269,9 +318,19 @@ export function ProfileProvider({ children }: { children: ReactNode }) {
   }, [user]);
 
   const selectProfile = useCallback(
-    (id: string) => {
+    async (id: string) => {
       setSelectedProfileId(id);
       if (user) saveSelectedId(accountKeyFromUser(user), id);
+      // Call switch-profile to get a new token scoped to this profile
+      try {
+        const newToken = await switchProfileRequest(id);
+        if (newToken) {
+          setStoredToken(newToken);
+        }
+      } catch (e) {
+        console.error('Failed to switch profile:', e);
+        // Still set the profile ID even if token switch fails
+      }
     },
     [user]
   );
