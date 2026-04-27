@@ -75,57 +75,86 @@ function TranscriptWithHighlights({
   transcript: string;
   usefulSentences: UsefulSentence[];
 }) {
-  // Escape special regex characters
-  const escapeRegExp = (string: string): string => {
-    return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  };
+  type Match = { start: number; end: number; index: number };
 
-  // Create segments of text with highlighting info
-  const createSegments = (): Array<{ text: string; isHighlighted: boolean; index?: number }> => {
-    const segments: Array<{ text: string; isHighlighted: boolean; index?: number }> = [];
-    let remainingText = transcript;
+  const findMatches = (): Match[] => {
+    const matches: Match[] = [];
 
-    // Sort sentences by length (longest first) to avoid partial matches
-    const sortedSentences = [...usefulSentences].sort((a, b) => b.sentence.length - a.sentence.length);
+    for (let i = 0; i < usefulSentences.length; i++) {
+      const sentence = usefulSentences[i].sentence;
+      if (!sentence || sentence.trim().length === 0) continue;
 
-    while (remainingText.length > 0) {
-      let foundMatch = false;
+      // Strategy 1: Try exact substring match (case-insensitive)
+      let pos = transcript.toLowerCase().indexOf(sentence.toLowerCase());
+      let matchedLength = sentence.length;
 
-      // Try to find any useful sentence in remaining text
-      for (let i = 0; i < sortedSentences.length; i++) {
-        const sentence = sortedSentences[i].sentence;
-        const escapedSentence = escapeRegExp(sentence);
-        const regex = new RegExp(escapedSentence, 'i');
-        const match = remainingText.match(regex);
+      // Strategy 2: Try without trailing punctuation
+      if (pos === -1) {
+        const withoutTrailingPunct = sentence.replace(/[.,!?;:'"\u2018\u2019\u201C\u201D]+$/, '');
+        pos = transcript.toLowerCase().indexOf(withoutTrailingPunct.toLowerCase());
+        if (pos !== -1) matchedLength = withoutTrailingPunct.length;
+      }
 
-        if (match && match.index !== undefined) {
-          // Add text before match (if any)
-          if (match.index > 0) {
-            segments.push({
-              text: remainingText.slice(0, match.index),
-              isHighlighted: false,
-            });
+      // Strategy 3: Try without any punctuation
+      if (pos === -1) {
+        const withoutPunct = sentence.replace(/[.,!?;:'"\u2018\u2019\u201C\u201D]/g, '');
+        const normalizedTranscript = transcript.replace(/[.,!?;:'"\u2018\u2019\u201C\u201D]/g, '');
+        pos = normalizedTranscript.toLowerCase().indexOf(withoutPunct.toLowerCase());
+        if (pos !== -1) {
+          // Map position back to original transcript with punctuation
+          let punctCount = 0;
+          for (let j = 0; j < transcript.length && punctCount < pos; j++) {
+            if (!/[.,!?;:'"\u2018\u2019\u201C\u201D]/.test(transcript[j])) {
+              punctCount++;
+            }
           }
-
-          // Add the highlighted match
-          segments.push({
-            text: match[0],
-            isHighlighted: true,
-            index: usefulSentences.findIndex((s) => s.sentence === sentence),
-          });
-
-          // Update remaining text
-          remainingText = remainingText.slice(match.index + match[0].length);
-          foundMatch = true;
-          break;
+          pos = punctCount;
+          matchedLength = sentence.length;
         }
       }
 
-      // If no match found, add remaining text as non-highlighted
-      if (!foundMatch) {
-        segments.push({ text: remainingText, isHighlighted: false });
-        break;
+      if (pos !== -1) {
+        matches.push({ start: pos, end: pos + matchedLength, index: i });
       }
+    }
+
+    // Sort and remove overlaps
+    matches.sort((a, b) => a.start - b.start);
+    const result: Match[] = [];
+    let lastEnd = 0;
+    for (const m of matches) {
+      if (m.start >= lastEnd) {
+        result.push(m);
+        lastEnd = m.end;
+      }
+    }
+    return result;
+  };
+
+  const createSegments = (): Array<{ text: string; isHighlighted: boolean; index?: number }> => {
+    const segments: Array<{ text: string; isHighlighted: boolean; index?: number }> = [];
+    const matches = findMatches();
+
+    if (matches.length === 0) {
+      // No matches found, return entire transcript as single segment
+      return [{ text: transcript, isHighlighted: false }];
+    }
+
+    let pos = 0;
+    for (const match of matches) {
+      if (match.start > pos) {
+        segments.push({ text: transcript.slice(pos, match.start), isHighlighted: false });
+      }
+      segments.push({
+        text: transcript.slice(match.start, match.end),
+        isHighlighted: true,
+        index: match.index,
+      });
+      pos = match.end;
+    }
+
+    if (pos < transcript.length) {
+      segments.push({ text: transcript.slice(pos), isHighlighted: false });
     }
 
     return segments;
