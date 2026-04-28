@@ -14,6 +14,8 @@ export const API_ROUTES = {
   youtubeAnalyze: '/youtube/analyze',
   youtubeHistory: '/youtube/history',
   profiles: '/profiles',
+  speechEvaluate: '/speech/evaluate',
+  speechHistory: '/speech/history',
 } as const;
 
 /** GET sentence analysis list: `/v1/sentence/analyses` */
@@ -38,6 +40,11 @@ export function sentenceDetailPath(sentenceId: string): string {
 /** GET one YouTube analysis by id: `/youtube/{analysis_id}` */
 export function youtubeAnalysisDetailPath(analysisId: string): string {
   return `/youtube/${encodeURIComponent(analysisId)}`;
+}
+
+/** GET one speech recording by id: `/speech/{recording_id}` */
+export function speechDetailPath(recordingId: string): string {
+  return `/speech/${encodeURIComponent(recordingId)}`;
 }
 
 function trimTrailingSlashes(url: string): string {
