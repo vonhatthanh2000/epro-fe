@@ -16,6 +16,9 @@ export const API_ROUTES = {
   profiles: '/profiles',
   speechEvaluate: '/speech/evaluate',
   speechHistory: '/speech/history',
+  shadowingAttempt: '/shadowing/attempt',
+  shadowingHistory: '/shadowing/history',
+  shadowingStats: '/shadowing/stats',
 } as const;
 
 /** GET sentence analysis list: `/v1/sentence/analyses` */
@@ -45,6 +48,11 @@ export function youtubeAnalysisDetailPath(analysisId: string): string {
 /** GET one speech recording by id: `/speech/{recording_id}` */
 export function speechDetailPath(recordingId: string): string {
   return `/speech/${encodeURIComponent(recordingId)}`;
+}
+
+/** GET one shadowing attempt by id: `/shadowing/{attempt_id}` */
+export function shadowingDetailPath(attemptId: string): string {
+  return `/shadowing/${encodeURIComponent(attemptId)}`;
 }
 
 function trimTrailingSlashes(url: string): string {
@@ -137,4 +145,178 @@ export async function apiFetch(path: string, init: RequestInit = {}): Promise<Re
     headers.set('Authorization', `Bearer ${token}`);
   }
   return fetch(apiUrl(path), { ...init, headers });
+}
+
+// ==================== Shadowing API Types ====================
+
+export interface WordDifference {
+  expected: string;
+  actual: string;
+}
+
+export interface ShadowingEvaluation {
+  similarity_score: number;
+  differences: WordDifference[];
+  feedback: string;
+}
+
+export interface ShadowingAttemptResponse {
+  id: string; // Composite format: {profile_id}:{youtube_gem_id}:{target_sentence_index}
+  created_at: string;
+  updated_at?: string; // Present when re-practicing (updates existing record)
+  youtube_gem_id: string;
+  target_sentence: string;
+  target_sentence_index: number; // Now required (part of composite key)
+  audio_url: string;
+  audio_duration_seconds: number | null;
+  user_transcript: string;
+  evaluation: ShadowingEvaluation;
+}
+
+export interface ShadowingHistoryItem {
+  id: string; // Composite format
+  created_at: string;
+  youtube_gem_id: string;
+  target_sentence: string;
+  target_sentence_index: number; // Now required
+  audio_url: string;
+  audio_duration_seconds: number | null;
+  similarity_score: number | null;
+}
+
+export interface ShadowingHistoryResponse {
+  items: ShadowingHistoryItem[];
+  total: number;
+  page: number;
+  page_size: number;
+}
+
+export interface ShadowingStatsResponse {
+  youtube_gem_id: string;
+  total_attempts: number;
+  sentences_practiced: number;
+  average_similarity_score: number | null;
+  best_attempt_id: string | null;
+  best_similarity_score: number | null;
+  progress_by_sentence: Array<{
+    sentence_index: number;
+    attempts: number;
+    best_score: number;
+  }>;
+}
+
+// ==================== Shadowing API Service Functions ====================
+
+/**
+ * Submit a shadowing attempt for a YouTube sentence.
+ * Audio file is uploaded and evaluated against the target sentence.
+ */
+export async function submitShadowingAttempt(
+  audioFile: File,
+  youtubeGemId: string,
+  targetSentence: string,
+  targetSentenceIndex?: number,
+  durationSeconds?: number
+): Promise<ShadowingAttemptResponse> {
+  const formData = new FormData();
+  formData.append('audio', audioFile);
+  formData.append('youtube_gem_id', youtubeGemId);
+  formData.append('target_sentence', targetSentence);
+
+  if (targetSentenceIndex !== undefined) {
+    formData.append('target_sentence_index', targetSentenceIndex.toString());
+  }
+  if (durationSeconds !== undefined) {
+    formData.append('duration_seconds', durationSeconds.toString());
+  }
+
+  // For FormData, we must NOT set Content-Type header - browser sets it with boundary
+  const headers = new Headers();
+  const token = getStoredToken();
+  if (token) {
+    headers.set('Authorization', `Bearer ${token}`);
+  }
+  // Content-Type is intentionally NOT set - browser handles it
+
+  const response = await fetch(apiUrl(API_ROUTES.shadowingAttempt), {
+    method: 'POST',
+    headers,
+    body: formData,
+  });
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({}));
+    throw new Error(error.detail || 'Failed to submit shadowing attempt');
+  }
+
+  const data = await response.json();
+  const unwrapped = unwrapApiPayload(data);
+  return (unwrapped || data) as ShadowingAttemptResponse;
+}
+
+/**
+ * Get paginated list of shadowing attempts.
+ * Optionally filter by youtube_gem_id.
+ */
+export async function getShadowingHistory(
+  youtubeGemId?: string,
+  page = 0,
+  pageSize = 20
+): Promise<ShadowingHistoryResponse> {
+  const params = new URLSearchParams({
+    page: page.toString(),
+    page_size: pageSize.toString(),
+  });
+  if (youtubeGemId) {
+    params.append('youtube_gem_id', youtubeGemId);
+  }
+
+  const response = await apiFetch(`${API_ROUTES.shadowingHistory}?${params}`, {
+    method: 'GET',
+  });
+
+  if (!response.ok) {
+    throw new Error('Failed to fetch shadowing history');
+  }
+
+  const data = await response.json();
+  const unwrapped = unwrapApiPayload(data);
+  return (unwrapped || data) as ShadowingHistoryResponse;
+}
+
+/**
+ * Get detailed shadowing attempt by ID.
+ */
+export async function getShadowingDetail(attemptId: string): Promise<ShadowingAttemptResponse> {
+  const response = await apiFetch(shadowingDetailPath(attemptId), {
+    method: 'GET',
+  });
+
+  if (!response.ok) {
+    throw new Error('Failed to fetch shadowing details');
+  }
+
+  const data = await response.json();
+  const unwrapped = unwrapApiPayload(data);
+  return (unwrapped || data) as ShadowingAttemptResponse;
+}
+
+/**
+ * Get shadowing stats for a specific YouTube video.
+ */
+export async function getShadowingStats(
+  youtubeGemId: string
+): Promise<ShadowingStatsResponse> {
+  const response = await apiFetch(
+    `${API_ROUTES.shadowingStats}/${encodeURIComponent(youtubeGemId)}`,
+    { method: 'GET' }
+  );
+
+  if (!response.ok) {
+    throw new Error('Failed to fetch shadowing stats');
+  }
+
+  const data = await response.json();
+  const unwrapped = unwrapApiPayload(data);
+  return (unwrapped || data) as ShadowingStatsResponse;
 }

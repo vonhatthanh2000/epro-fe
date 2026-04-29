@@ -65,7 +65,7 @@ export function HomePage() {
                 !
               </p>
               {selectedProfile && (
-                <p className="text-[11px] text-muted-foreground/90 mt-0.5 flex items-center gap-1.5">
+                <div className="text-[11px] text-muted-foreground/90 mt-0.5 flex items-center gap-1.5">
                   <ProfileAvatar
                     profile={selectedProfile}
                     sizeClass="w-6 h-6"
@@ -73,7 +73,7 @@ export function HomePage() {
                   />
                   Learning as{' '}
                   <span className="font-medium text-gray-700">{selectedProfile.display_name}</span>
-                </p>
+                </div>
               )}
             </div>
           </div>
