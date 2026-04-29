@@ -17,6 +17,10 @@ import {
   ExternalLink,
   ChevronDown,
   ChevronUp,
+  Mic,
+  Square,
+  Volume2,
+  Headphones,
 } from 'lucide-react';
 import {
   API_ROUTES,
@@ -26,6 +30,7 @@ import {
   withProfileId,
 } from '../../config/api';
 import { useProfile } from '../context/ProfileContext';
+import { useAudioRecorder } from '../hooks/useAudioRecorder';
 
 interface UsefulSentence {
   sentence: string;
@@ -267,6 +272,20 @@ export function YoutubeGem() {
   const [historyDetailLoading, setHistoryDetailLoading] = useState(false);
 
   const [showTranscript, setShowTranscript] = useState(false);
+  const [isShadowingMode, setIsShadowingMode] = useState(false);
+  const [currentSentenceIndex, setCurrentSentenceIndex] = useState(0);
+  const [sentenceRecordings, setSentenceRecordings] = useState<Map<number, { audioUrl: string; duration: number }>>(new Map());
+  const [shadowingError, setShadowingError] = useState<string | null>(null);
+
+  // Audio recorder for shadowing
+  const {
+    isRecording,
+    duration: recordingDuration,
+    startRecording,
+    stopRecording,
+    reset: resetRecorder,
+    error: recorderError,
+  } = useAudioRecorder();
 
   const analysesFetchGen = useRef(0);
 
@@ -419,6 +438,59 @@ export function YoutubeGem() {
   const isValidYoutubeUrl = (url: string): boolean => {
     const youtubeRegex = /^(https?:\/\/)?(www\.)?(youtube\.com|youtu\.be)\/.+/;
     return youtubeRegex.test(url);
+  };
+
+  // Split transcript into sentences for shadowing
+  const getSentences = (transcript: string): string[] => {
+    // Split by sentence endings (. ! ?) followed by space or end of string
+    // Keep the punctuation
+    const sentences = transcript
+      .replace(/([.!?])(\s+)(?=[A-Z])/g, '$1\n')
+      .split('\n')
+      .map((s) => s.trim())
+      .filter((s) => s.length > 0);
+    return sentences;
+  };
+
+  const handleShadowingToggle = () => {
+    setIsShadowingMode(!isShadowingMode);
+    setCurrentSentenceIndex(0);
+    setShadowingError(null);
+    if (isShadowingMode) {
+      // Reset recordings when exiting shadowing mode
+      setSentenceRecordings(new Map());
+    }
+  };
+
+  const handleSentenceRecord = async (sentenceIndex: number) => {
+    if (isRecording) {
+      // Stop recording
+      const audioFile = await stopRecording();
+      if (audioFile) {
+        // Create local URL for playback
+        const audioUrl = URL.createObjectURL(audioFile);
+        setSentenceRecordings((prev) => {
+          const newMap = new Map(prev);
+          newMap.set(sentenceIndex, { audioUrl, duration: recordingDuration });
+          return newMap;
+        });
+        // Move to next sentence if available
+        const sentences = analysis ? getSentences(analysis.transcript) : [];
+        if (sentenceIndex < sentences.length - 1) {
+          setCurrentSentenceIndex(sentenceIndex + 1);
+        }
+      }
+    } else {
+      // Start recording
+      setShadowingError(null);
+      await startRecording();
+    }
+  };
+
+  const formatDuration = (seconds: number): string => {
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${mins}:${secs.toString().padStart(2, '0')}`;
   };
 
   return (
@@ -682,26 +754,44 @@ export function YoutubeGem() {
               </div>
             )}
 
-            {/* Transcript */}
+            {/* Transcript with Shadowing */}
             {analysis.transcript && (
               <div>
-                <button
-                  onClick={() => setShowTranscript(!showTranscript)}
-                  className="w-full flex items-center justify-between p-3 bg-gray-100 rounded-xl hover:bg-gray-200 transition-colors"
-                >
-                  <span className="text-sm font-medium text-gray-700 flex items-center gap-2">
-                    <BookOpen className="w-4 h-4" />
-                    Full Transcript
+                <div className="flex items-center justify-between p-3 bg-gray-100 rounded-xl mb-2">
+                  <button
+                    onClick={() => setShowTranscript(!showTranscript)}
+                    className="flex items-center gap-2 flex-1 text-left hover:opacity-80 transition-opacity"
+                  >
+                    <BookOpen className="w-4 h-4 text-gray-600" />
+                    <span className="text-sm font-medium text-gray-700">
+                      Full Transcript
+                    </span>
                     <span className="text-xs text-muted-foreground font-normal">
                       (useful sentences highlighted)
                     </span>
-                  </span>
-                  {showTranscript ? (
-                    <ChevronUp className="w-4 h-4 text-gray-500" />
-                  ) : (
-                    <ChevronDown className="w-4 h-4 text-gray-500" />
-                  )}
-                </button>
+                    {showTranscript ? (
+                      <ChevronUp className="w-4 h-4 text-gray-500 ml-2" />
+                    ) : (
+                      <ChevronDown className="w-4 h-4 text-gray-500 ml-2" />
+                    )}
+                  </button>
+
+                  {/* Shadowing Mode Toggle */}
+                  <Button
+                    onClick={handleShadowingToggle}
+                    variant={isShadowingMode ? 'default' : 'outline'}
+                    size="sm"
+                    className={`ml-2 gap-2 ${
+                      isShadowingMode
+                        ? 'bg-gradient-to-r from-violet-500 to-purple-600 hover:from-violet-600 hover:to-purple-700'
+                        : 'border-violet-200 text-violet-700 hover:bg-violet-50'
+                    }`}
+                  >
+                    <Headphones className="w-4 h-4" />
+                    {isShadowingMode ? 'Exit Shadowing' : 'Shadowing'}
+                  </Button>
+                </div>
+
                 <AnimatePresence>
                   {showTranscript && (
                     <motion.div
@@ -711,10 +801,148 @@ export function YoutubeGem() {
                       className="overflow-hidden"
                     >
                       <div className="mt-2 p-4 bg-gray-50 rounded-xl border border-gray-200">
-                        <TranscriptWithHighlights
-                          transcript={analysis.transcript}
-                          usefulSentences={analysis.useful_sentences}
-                        />
+                        {!isShadowingMode ? (
+                          // Normal transcript view
+                          <TranscriptWithHighlights
+                            transcript={analysis.transcript}
+                            usefulSentences={analysis.useful_sentences}
+                          />
+                        ) : (
+                          // Shadowing mode - sentence by sentence
+                          <div className="space-y-4">
+                            <div className="p-3 bg-violet-50 rounded-lg border border-violet-200 mb-4">
+                              <p className="text-sm text-violet-800">
+                                <span className="font-semibold">Shadowing Mode:</span> Read each sentence aloud, then record yourself mimicking the pronunciation. Click the mic button to start/stop recording.
+                              </p>
+                            </div>
+
+                            {recorderError && (
+                              <div className="p-3 bg-red-50 rounded-lg border border-red-200">
+                                <p className="text-sm text-red-600">{recorderError}</p>
+                              </div>
+                            )}
+
+                            {shadowingError && (
+                              <div className="p-3 bg-red-50 rounded-lg border border-red-200">
+                                <p className="text-sm text-red-600">{shadowingError}</p>
+                              </div>
+                            )}
+
+                            <div className="space-y-3 max-h-[400px] overflow-y-auto pr-2">
+                              {getSentences(analysis.transcript).map((sentence, index) => {
+                                const hasRecording = sentenceRecordings.get(index);
+                                const isCurrentSentence = currentSentenceIndex === index;
+                                const isRecordingThis = isRecording && isCurrentSentence;
+
+                                return (
+                                  <motion.div
+                                    key={index}
+                                    initial={{ opacity: 0, y: 10 }}
+                                    animate={{ opacity: 1, y: 0 }}
+                                    transition={{ delay: index * 0.03 }}
+                                    className={`p-4 rounded-xl border transition-all ${
+                                      isCurrentSentence
+                                        ? 'bg-violet-100 border-violet-300 shadow-md'
+                                        : hasRecording
+                                          ? 'bg-emerald-50 border-emerald-200'
+                                          : 'bg-white border-gray-200'
+                                    }`}
+                                  >
+                                    <div className="flex items-start gap-3">
+                                      <span className="flex-shrink-0 w-7 h-7 rounded-full bg-gray-200 text-gray-600 text-xs font-medium flex items-center justify-center">
+                                        {index + 1}
+                                      </span>
+
+                                      <div className="flex-1 min-w-0">
+                                        <p className={`text-sm mb-2 ${isCurrentSentence ? 'text-violet-900 font-medium' : 'text-gray-700'}`}>
+                                          {sentence}
+                                        </p>
+
+                                        <div className="flex items-center gap-2">
+                                          {/* Record Button */}
+                                          <motion.button
+                                            whileHover={{ scale: 1.05 }}
+                                            whileTap={{ scale: 0.95 }}
+                                            onClick={() => handleSentenceRecord(index)}
+                                            disabled={!isCurrentSentence && !hasRecording && !isRecording}
+                                            className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-medium transition-all ${
+                                              isRecordingThis
+                                                ? 'bg-red-500 text-white shadow-red-500/30 shadow-lg'
+                                                : hasRecording
+                                                  ? 'bg-gray-200 text-gray-400 cursor-not-allowed'
+                                                  : isCurrentSentence
+                                                    ? 'bg-violet-500 text-white hover:bg-violet-600 shadow-md'
+                                                    : 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                                            }`}
+                                          >
+                                            {isRecordingThis ? (
+                                              <>
+                                                <Square className="w-3 h-3 fill-current" />
+                                                Recording {formatDuration(recordingDuration)}
+                                              </>
+                                            ) : hasRecording ? (
+                                              <>
+                                                <Mic className="w-3 h-3" />
+                                                Done
+                                              </>
+                                            ) : (
+                                              <>
+                                                <Mic className="w-3 h-3" />
+                                                Record
+                                              </>
+                                            )}
+                                          </motion.button>
+
+                                          {/* Recording Playback */}
+                                          {hasRecording && (
+                                            <div className="flex items-center gap-2">
+                                              <audio
+                                                controls
+                                                src={hasRecording.audioUrl}
+                                                className="h-8 w-32"
+                                              />
+                                              <span className="text-xs text-gray-500">
+                                                {formatDuration(hasRecording.duration)}
+                                              </span>
+                                            </div>
+                                          )}
+
+                                          {/* Status Indicator */}
+                                          {hasRecording && !isRecordingThis && (
+                                            <span className="text-xs text-emerald-600 flex items-center gap-1">
+                                              <Volume2 className="w-3 h-3" />
+                                              Recorded
+                                            </span>
+                                          )}
+                                        </div>
+                                      </div>
+                                    </div>
+                                  </motion.div>
+                                );
+                              })}
+                            </div>
+
+                            {/* Shadowing Progress */}
+                            <div className="mt-4 p-3 bg-gray-100 rounded-lg">
+                              <div className="flex items-center justify-between text-sm mb-2">
+                                <span className="text-gray-600">Progress</span>
+                                <span className="font-medium text-gray-800">
+                                  {sentenceRecordings.size} / {getSentences(analysis.transcript).length} recorded
+                                </span>
+                              </div>
+                              <div className="w-full h-2 bg-gray-200 rounded-full overflow-hidden">
+                                <motion.div
+                                  className="h-full bg-gradient-to-r from-violet-500 to-purple-600"
+                                  initial={{ width: 0 }}
+                                  animate={{
+                                    width: `${(sentenceRecordings.size / getSentences(analysis.transcript).length) * 100}%`,
+                                  }}
+                                  transition={{ duration: 0.3 }}
+                                />
+                              </div>
+                            </div>
+                          </div>
+                        )}
                       </div>
                     </motion.div>
                   )}
