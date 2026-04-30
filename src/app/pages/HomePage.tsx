@@ -4,13 +4,14 @@ import { useProfile } from '../context/ProfileContext';
 import { CorrectSentence } from '../components/CorrectSentence';
 import { WritingGrade } from '../components/WritingGrade';
 import { YoutubeGem } from '../components/YoutubeGem';
+import { SpeechRecorder } from '../components/SpeechRecorder';
 import { motion } from 'motion/react';
-import { BookOpen, Loader2, LogOut, PenTool, FileText, Users, Youtube } from 'lucide-react';
+import { BookOpen, Loader2, LogOut, PenTool, FileText, Users, Youtube, Mic2 } from 'lucide-react';
 import { useNavigate } from 'react-router';
 import { ProfileAvatar } from '../components/ProfileAvatar';
 
 export function HomePage() {
-  const [activeFeature, setActiveFeature] = useState<'sentence' | 'grade' | 'youtube'>('sentence');
+  const [activeFeature, setActiveFeature] = useState<'sentence' | 'grade' | 'youtube' | 'speech'>('sentence');
   const { user, isSessionLoading, logout } = useAuth();
   const { selectedProfile, selectedProfileId, profilesHydrated } = useProfile();
 
@@ -64,7 +65,7 @@ export function HomePage() {
                 !
               </p>
               {selectedProfile && (
-                <p className="text-[11px] text-muted-foreground/90 mt-0.5 flex items-center gap-1.5">
+                <div className="text-[11px] text-muted-foreground/90 mt-0.5 flex items-center gap-1.5">
                   <ProfileAvatar
                     profile={selectedProfile}
                     sizeClass="w-6 h-6"
@@ -72,7 +73,7 @@ export function HomePage() {
                   />
                   Learning as{' '}
                   <span className="font-medium text-gray-700">{selectedProfile.display_name}</span>
-                </p>
+                </div>
               )}
             </div>
           </div>
@@ -113,7 +114,7 @@ export function HomePage() {
         <motion.div
           initial={{ opacity: 0, y: -20 }}
           animate={{ opacity: 1, y: 0 }}
-          className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8"
+          className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-8"
         >
           <motion.button
             whileHover={{ scale: 1.02 }}
@@ -201,6 +202,35 @@ export function HomePage() {
               </div>
             </div>
           </motion.button>
+
+          <motion.button
+            whileHover={{ scale: 1.02 }}
+            whileTap={{ scale: 0.98 }}
+            onClick={() => setActiveFeature('speech')}
+            className={`p-6 rounded-2xl transition-all duration-300 ${
+              activeFeature === 'speech'
+                ? 'bg-gradient-to-br from-violet-500 to-purple-600 text-white shadow-lg'
+                : 'bg-white text-gray-700 hover:shadow-md'
+            }`}
+          >
+            <div className="flex items-center gap-3">
+              <div
+                className={`w-12 h-12 rounded-xl flex items-center justify-center ${
+                  activeFeature === 'speech' ? 'bg-white/20' : 'bg-violet-100'
+                }`}
+              >
+                <Mic2
+                  className={`w-6 h-6 ${activeFeature === 'speech' ? 'text-white' : 'text-violet-600'}`}
+                />
+              </div>
+              <div className="text-left">
+                <h3>Speech Practice</h3>
+                <p className={`text-sm ${activeFeature === 'speech' ? 'text-white/80' : 'text-muted-foreground'}`}>
+                  AI-powered speaking evaluation
+                </p>
+              </div>
+            </div>
+          </motion.button>
         </motion.div>
 
         {/* Feature Content */}
@@ -214,8 +244,10 @@ export function HomePage() {
             <CorrectSentence />
           ) : activeFeature === 'grade' ? (
             <WritingGrade />
-          ) : (
+          ) : activeFeature === 'youtube' ? (
             <YoutubeGem />
+          ) : (
+            <SpeechRecorder />
           )}
         </motion.div>
       </main>
