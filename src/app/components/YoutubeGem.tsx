@@ -316,8 +316,10 @@ export function YoutubeGem() {
   // Shadowing API integration state
   const [shadowingAttempts, setShadowingAttempts] = useState<Map<number, ShadowingAttemptResponse>>(new Map());
   const [shadowingStats, setShadowingStats] = useState<ShadowingStatsResponse | null>(null);
-  const [isSubmittingShadowing, setIsSubmittingShadowing] = useState(false);
-  const [selectedShadowingAttempt, setSelectedShadowingAttempt] = useState<ShadowingAttemptResponse | null>(null);
+  /** Sentence index currently being evaluated (upload + API), or null */
+  const [submittingSentenceIndex, setSubmittingSentenceIndex] = useState<number | null>(null);
+  /** Which sentence row shows the expanded AI evaluation panel */
+  const [evaluationExpandedIndex, setEvaluationExpandedIndex] = useState<number | null>(null);
 
   // Audio recorder for shadowing
   const {
@@ -525,7 +527,8 @@ export function YoutubeGem() {
     setIsShadowingMode(false);
     setCurrentSentenceIndex(0);
     setShadowingError(null);
-    setSelectedShadowingAttempt(null);
+    setEvaluationExpandedIndex(null);
+    setSubmittingSentenceIndex(null);
     setSentenceRecordings(new Map());
     setShadowingAttempts(new Map());
     setShadowingStats(null);
@@ -536,7 +539,8 @@ export function YoutubeGem() {
     setShowTranscript(true);
     setCurrentSentenceIndex(0);
     setShadowingError(null);
-    setSelectedShadowingAttempt(null);
+    setEvaluationExpandedIndex(null);
+    setSubmittingSentenceIndex(null);
     if (analysis) void loadShadowingStats();
   }, [analysis, loadShadowingStats]);
 
@@ -558,8 +562,7 @@ export function YoutubeGem() {
           return newMap;
         });
 
-        // Submit to backend for evaluation
-        setIsSubmittingShadowing(true);
+        setSubmittingSentenceIndex(sentenceIndex);
         setShadowingError(null);
 
         try {
@@ -574,22 +577,19 @@ export function YoutubeGem() {
             recordingDuration
           );
 
-          // Store the attempt result
           setShadowingAttempts((prev) => {
             const newMap = new Map(prev);
             newMap.set(sentenceIndex, attempt);
             return newMap;
           });
 
-          // Auto-show the result
-          setSelectedShadowingAttempt(attempt);
+          setEvaluationExpandedIndex(sentenceIndex);
 
-          // Refresh stats
           void loadShadowingStats();
         } catch (err) {
           setShadowingError(err instanceof Error ? err.message : 'Failed to evaluate shadowing attempt');
         } finally {
-          setIsSubmittingShadowing(false);
+          setSubmittingSentenceIndex(null);
         }
 
         // Move to next sentence if available
@@ -643,31 +643,30 @@ export function YoutubeGem() {
 
   // Helper to load shadowing detail by constructing composite ID
   const handleViewShadowingDetail = async (sentenceIndex: number) => {
-    // Check if we have it locally first
     const localAttempt = shadowingAttempts.get(sentenceIndex);
     if (localAttempt) {
-      setSelectedShadowingAttempt(localAttempt);
+      setEvaluationExpandedIndex(sentenceIndex);
       return;
     }
 
-    // Need to fetch from backend - construct composite ID
     if (!analysis || !selectedProfileId) return;
 
-    // Composite ID format: {profile_id}:{youtube_gem_id}:{sentence_index}
     const compositeId = `${selectedProfileId}:${analysis.id}:${sentenceIndex}`;
 
+    setSubmittingSentenceIndex(sentenceIndex);
     try {
       const attempt = await getShadowingDetail(compositeId);
-      // Store it locally for future use
       setShadowingAttempts(prev => {
         const newMap = new Map(prev);
         newMap.set(sentenceIndex, attempt);
         return newMap;
       });
-      setSelectedShadowingAttempt(attempt);
+      setEvaluationExpandedIndex(sentenceIndex);
     } catch (err) {
       console.error('Failed to load shadowing detail:', err);
       setShadowingError('Failed to load evaluation details');
+    } finally {
+      setSubmittingSentenceIndex(null);
     }
   };
 
@@ -1148,100 +1147,6 @@ export function YoutubeGem() {
                       </div>
                     )}
 
-                    <AnimatePresence>
-                      {selectedShadowingAttempt && (
-                        <motion.div
-                          initial={{ opacity: 0, height: 0 }}
-                          animate={{ opacity: 1, height: 'auto' }}
-                          exit={{ opacity: 0, height: 0 }}
-                          className="overflow-hidden rounded-xl border-2 border-violet-200 bg-white"
-                        >
-                          <div className="border-b border-violet-100 bg-violet-50/50 p-4">
-                            <div className="flex items-center justify-between">
-                              <div className="flex items-center gap-2">
-                                <Sparkles className="h-4 w-4 text-violet-600" />
-                                <span className="font-semibold text-violet-900">AI Evaluation</span>
-                              </div>
-                              <button
-                                type="button"
-                                onClick={() => setSelectedShadowingAttempt(null)}
-                                className="text-xs text-gray-500 hover:text-gray-700"
-                              >
-                                Close
-                              </button>
-                            </div>
-                          </div>
-                          <div className="space-y-4 p-4">
-                            <div className="flex items-center gap-4">
-                              <div
-                                className={`flex h-16 w-16 items-center justify-center rounded-full text-xl font-bold ${
-                                  selectedShadowingAttempt.evaluation.similarity_score >= 80
-                                    ? 'bg-emerald-100 text-emerald-700'
-                                    : selectedShadowingAttempt.evaluation.similarity_score >= 60
-                                      ? 'bg-yellow-100 text-yellow-700'
-                                      : 'bg-red-100 text-red-700'
-                                }`}
-                              >
-                                {selectedShadowingAttempt.evaluation.similarity_score}%
-                              </div>
-                              <div>
-                                <div className="font-medium text-gray-900">Similarity Score</div>
-                                <div className="text-sm text-gray-500">
-                                  {selectedShadowingAttempt.evaluation.similarity_score >= 80
-                                    ? 'Excellent match!'
-                                    : selectedShadowingAttempt.evaluation.similarity_score >= 60
-                                      ? 'Good attempt, keep practicing!'
-                                      : 'Needs more practice'}
-                                </div>
-                              </div>
-                            </div>
-                            <div className="space-y-2">
-                              <div className="rounded-lg border border-blue-200 bg-blue-50 p-3">
-                                <div className="mb-1 text-xs font-medium text-blue-600">Target:</div>
-                                <p className="text-sm text-gray-800">{selectedShadowingAttempt.target_sentence}</p>
-                              </div>
-                              <div className="rounded-lg border border-gray-200 bg-gray-50 p-3">
-                                <div className="mb-1 text-xs font-medium text-gray-500">You said:</div>
-                                <p className="text-sm text-gray-800">{selectedShadowingAttempt.user_transcript}</p>
-                              </div>
-                            </div>
-                            {selectedShadowingAttempt.evaluation.differences.length > 0 && (
-                              <div>
-                                <div className="mb-2 text-sm font-medium text-gray-700">Differences:</div>
-                                <div className="space-y-1">
-                                  {selectedShadowingAttempt.evaluation.differences.map((diff, i) => (
-                                    <div key={i} className="flex items-center gap-2 text-sm">
-                                      <span className="text-red-600 line-through">{diff.expected}</span>
-                                      <span className="text-gray-400">→</span>
-                                      <span className="text-green-600">{diff.actual}</span>
-                                    </div>
-                                  ))}
-                                </div>
-                              </div>
-                            )}
-                            <div className="rounded-lg border border-amber-200 bg-amber-50 p-3">
-                              <div className="mb-1 text-xs font-medium text-amber-700">Feedback:</div>
-                              <p className="text-sm text-amber-800">{selectedShadowingAttempt.evaluation.feedback}</p>
-                            </div>
-                            {selectedShadowingAttempt.audio_url && (
-                              <audio controls src={selectedShadowingAttempt.audio_url} className="w-full" />
-                            )}
-                          </div>
-                        </motion.div>
-                      )}
-                    </AnimatePresence>
-
-                    {isSubmittingShadowing && (
-                      <div className="flex items-center gap-3 rounded-lg border border-violet-200 bg-violet-50 p-3">
-                        <motion.div
-                          animate={{ rotate: 360 }}
-                          transition={{ duration: 1, repeat: Infinity, ease: 'linear' }}
-                          className="h-5 w-5 rounded-full border-2 border-violet-300 border-t-violet-600"
-                        />
-                        <span className="text-sm text-violet-700">Evaluating your pronunciation...</span>
-                      </div>
-                    )}
-
                     <div className="space-y-3">
                       {getSentences(analysis.transcript).map((sentence, index) => {
                         const hasRecording = sentenceRecordings.get(index);
@@ -1312,10 +1217,14 @@ export function YoutubeGem() {
                                       <Square className="h-3 w-3 fill-current" />
                                       Recording {formatDuration(recordingDuration)}
                                     </motion.button>
-                                  ) : hasRecording ? (
+                                  ) : submittingSentenceIndex === index ? (
                                     <span className="flex items-center gap-2 rounded-full bg-yellow-100 px-3 py-1.5 text-xs font-medium text-yellow-700">
-                                      <Mic className="h-3 w-3" />
-                                      Processing...
+                                      <motion.span
+                                        animate={{ rotate: 360 }}
+                                        transition={{ duration: 1, repeat: Infinity, ease: 'linear' }}
+                                        className="inline-block h-3 w-3 rounded-full border-2 border-yellow-400 border-t-yellow-700"
+                                      />
+                                      Evaluating…
                                     </span>
                                   ) : isCurrentSentence ? (
                                     <motion.button
@@ -1358,7 +1267,7 @@ export function YoutubeGem() {
                                       Continue below ↓
                                     </span>
                                   )}
-                                  {hasRecording && !hasAttempt && (
+                                  {hasRecording && !hasAttempt && submittingSentenceIndex !== index && (
                                     <div className="flex items-center gap-2">
                                       <audio controls src={hasRecording.audioUrl} className="h-8 w-32" />
                                       <span className="text-xs text-gray-500">{formatDuration(hasRecording.duration)}</span>
@@ -1379,6 +1288,87 @@ export function YoutubeGem() {
                                     </div>
                                   </div>
                                 )}
+
+                                <AnimatePresence>
+                                  {evaluationExpandedIndex === index && hasAttempt && (
+                                    <motion.div
+                                      initial={{ opacity: 0, height: 0 }}
+                                      animate={{ opacity: 1, height: 'auto' }}
+                                      exit={{ opacity: 0, height: 0 }}
+                                      className="mt-3 overflow-hidden rounded-xl border-2 border-violet-200 bg-white"
+                                    >
+                                      <div className="flex items-center justify-between border-b border-violet-100 bg-violet-50/50 px-3 py-2">
+                                        <div className="flex items-center gap-2">
+                                          <Sparkles className="h-4 w-4 text-violet-600" />
+                                          <span className="text-sm font-semibold text-violet-900">AI Evaluation</span>
+                                        </div>
+                                        <button
+                                          type="button"
+                                          onClick={() => setEvaluationExpandedIndex(null)}
+                                          className="text-xs text-gray-500 hover:text-gray-700"
+                                        >
+                                          Close
+                                        </button>
+                                      </div>
+                                      <div className="space-y-3 p-3">
+                                        <div className="flex items-center gap-3">
+                                          <div
+                                            className={`flex h-14 w-14 shrink-0 items-center justify-center rounded-full text-lg font-bold ${
+                                              hasAttempt.evaluation.similarity_score >= 80
+                                                ? 'bg-emerald-100 text-emerald-700'
+                                                : hasAttempt.evaluation.similarity_score >= 60
+                                                  ? 'bg-yellow-100 text-yellow-700'
+                                                  : 'bg-red-100 text-red-700'
+                                            }`}
+                                          >
+                                            {hasAttempt.evaluation.similarity_score}%
+                                          </div>
+                                          <div>
+                                            <div className="font-medium text-gray-900">Similarity Score</div>
+                                            <div className="text-sm text-gray-500">
+                                              {hasAttempt.evaluation.similarity_score >= 80
+                                                ? 'Excellent match!'
+                                                : hasAttempt.evaluation.similarity_score >= 60
+                                                  ? 'Good attempt, keep practicing!'
+                                                  : 'Needs more practice'}
+                                            </div>
+                                          </div>
+                                        </div>
+                                        <div className="space-y-2">
+                                          <div className="rounded-lg border border-blue-200 bg-blue-50 p-2">
+                                            <div className="mb-1 text-xs font-medium text-blue-600">Target:</div>
+                                            <p className="text-sm text-gray-800">{hasAttempt.target_sentence}</p>
+                                          </div>
+                                          <div className="rounded-lg border border-gray-200 bg-gray-50 p-2">
+                                            <div className="mb-1 text-xs font-medium text-gray-500">You said:</div>
+                                            <p className="text-sm text-gray-800">{hasAttempt.user_transcript}</p>
+                                          </div>
+                                        </div>
+                                        {hasAttempt.evaluation.differences.length > 0 && (
+                                          <div>
+                                            <div className="mb-1 text-sm font-medium text-gray-700">Differences:</div>
+                                            <div className="space-y-1">
+                                              {hasAttempt.evaluation.differences.map((diff, i) => (
+                                                <div key={i} className="flex items-center gap-2 text-sm">
+                                                  <span className="text-red-600 line-through">{diff.expected}</span>
+                                                  <span className="text-gray-400">→</span>
+                                                  <span className="text-green-600">{diff.actual}</span>
+                                                </div>
+                                              ))}
+                                            </div>
+                                          </div>
+                                        )}
+                                        <div className="rounded-lg border border-amber-200 bg-amber-50 p-2">
+                                          <div className="mb-1 text-xs font-medium text-amber-700">Feedback:</div>
+                                          <p className="text-sm text-amber-800">{hasAttempt.evaluation.feedback}</p>
+                                        </div>
+                                        {hasAttempt.audio_url && (
+                                          <audio controls src={hasAttempt.audio_url} className="w-full" />
+                                        )}
+                                      </div>
+                                    </motion.div>
+                                  )}
+                                </AnimatePresence>
                               </div>
                             </div>
                           </motion.div>
