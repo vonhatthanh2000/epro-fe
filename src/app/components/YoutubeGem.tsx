@@ -2,6 +2,13 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Badge } from './ui/badge';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from './ui/dialog';
 import { motion, AnimatePresence } from 'motion/react';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -504,22 +511,38 @@ export function YoutubeGem() {
     return sentences;
   };
 
-  const handleShadowingToggle = () => {
-    const newMode = !isShadowingMode;
-    setIsShadowingMode(newMode);
+  const loadShadowingStats = useCallback(async () => {
+    if (!analysis) return;
+    try {
+      const stats = await getShadowingStats(analysis.id);
+      setShadowingStats(stats);
+    } catch {
+      /* ignore */
+    }
+  }, [analysis]);
+
+  const exitShadowing = useCallback(() => {
+    setIsShadowingMode(false);
     setCurrentSentenceIndex(0);
     setShadowingError(null);
     setSelectedShadowingAttempt(null);
+    setSentenceRecordings(new Map());
+    setShadowingAttempts(new Map());
+    setShadowingStats(null);
+  }, []);
 
-    if (!newMode) {
-      // Reset all shadowing state when exiting shadowing mode
-      setSentenceRecordings(new Map());
-      setShadowingAttempts(new Map());
-      setShadowingStats(null);
-    } else if (analysis) {
-      // Load stats when entering shadowing mode
-      void loadShadowingStats();
-    }
+  const enterShadowing = useCallback(() => {
+    setIsShadowingMode(true);
+    setShowTranscript(true);
+    setCurrentSentenceIndex(0);
+    setShadowingError(null);
+    setSelectedShadowingAttempt(null);
+    if (analysis) void loadShadowingStats();
+  }, [analysis, loadShadowingStats]);
+
+  const handleShadowingToggle = () => {
+    if (isShadowingMode) exitShadowing();
+    else enterShadowing();
   };
 
   const handleSentenceRecord = async (sentenceIndex: number) => {
@@ -581,17 +604,6 @@ export function YoutubeGem() {
       await startRecording();
     }
   };
-
-  // Load shadowing stats for current video
-  const loadShadowingStats = useCallback(async () => {
-    if (!analysis) return;
-    try {
-      const stats = await getShadowingStats(analysis.id);
-      setShadowingStats(stats);
-    } catch {
-      // Silently fail - stats are not critical
-    }
-  }, [analysis]);
 
   // Load stats when entering shadowing mode or when analysis changes
   useEffect(() => {
@@ -666,6 +678,7 @@ export function YoutubeGem() {
   };
 
   return (
+    <>
     <div className="grid grid-cols-1 xl:grid-cols-5 gap-6">
       <div className="space-y-6 xl:col-span-2">
         {/* URL Input */}
@@ -827,8 +840,8 @@ export function YoutubeGem() {
               </div>
             </div>
 
-            {/* YouTube Embed */}
-            {extractVideoId(analysis.video_url) && (
+            {/* YouTube Embed (hidden in shadowing — player is in left column) */}
+            {extractVideoId(analysis.video_url) && !isShadowingMode && (
               <div>
                 <button
                   onClick={() => setShowEmbed(!showEmbed)}
@@ -1015,343 +1028,17 @@ export function YoutubeGem() {
                     >
                       <div className="mt-2 p-4 bg-gray-50 rounded-xl border border-gray-200">
                         {!isShadowingMode ? (
-                          // Normal transcript view
                           <TranscriptWithHighlights
                             transcript={analysis.transcript}
                             usefulSentences={analysis.useful_sentences}
                           />
                         ) : (
-                          // Shadowing mode - sentence by sentence
-                          <div className="space-y-4">
-                            {/* Shadowing Stats Panel */}
-                            {shadowingStats && shadowingStats.total_attempts > 0 && (
-                              <div className="p-4 bg-gradient-to-r from-violet-50 to-purple-50 rounded-xl border border-violet-200">
-                                <div className="flex items-center justify-between mb-3">
-                                  <span className="text-sm font-semibold text-violet-900">Your Progress</span>
-                                  <Badge variant="outline" className="bg-violet-100 text-violet-700 border-violet-300">
-                                    {shadowingStats.total_attempts} attempts
-                                  </Badge>
-                                </div>
-                                <div className="grid grid-cols-3 gap-3 text-center">
-                                  <div>
-                                    <div className="text-lg font-bold text-violet-700">
-                                      {shadowingStats.sentences_practiced}
-                                    </div>
-                                    <div className="text-xs text-violet-600">Sentences</div>
-                                  </div>
-                                  <div>
-                                    <div className="text-lg font-bold text-violet-700">
-                                      {shadowingStats.average_similarity_score?.toFixed(0) ?? '-'}
-                                    </div>
-                                    <div className="text-xs text-violet-600">Avg Score</div>
-                                  </div>
-                                  <div>
-                                    <div className="text-lg font-bold text-violet-700">
-                                      {shadowingStats.best_similarity_score ?? '-'}
-                                    </div>
-                                    <div className="text-xs text-violet-600">Best Score</div>
-                                  </div>
-                                </div>
-                              </div>
-                            )}
-
-                            <div className="p-3 bg-violet-50 rounded-lg border border-violet-200">
-                              <p className="text-sm text-violet-800">
-                                <span className="font-semibold">Shadowing Mode:</span> Read each sentence aloud, then record yourself mimicking the pronunciation. Click the mic button to start/stop recording.
-                              </p>
-                            </div>
-
-                            {recorderError && (
-                              <div className="p-3 bg-red-50 rounded-lg border border-red-200">
-                                <p className="text-sm text-red-600">{recorderError}</p>
-                              </div>
-                            )}
-
-                            {shadowingError && (
-                              <div className="p-3 bg-red-50 rounded-lg border border-red-200">
-                                <p className="text-sm text-red-600">{shadowingError}</p>
-                              </div>
-                            )}
-
-                            {/* Selected Attempt Detail View */}
-                            <AnimatePresence>
-                              {selectedShadowingAttempt && (
-                                <motion.div
-                                  initial={{ opacity: 0, height: 0 }}
-                                  animate={{ opacity: 1, height: 'auto' }}
-                                  exit={{ opacity: 0, height: 0 }}
-                                  className="bg-white rounded-xl border-2 border-violet-200 overflow-hidden"
-                                >
-                                  <div className="p-4 border-b border-violet-100 bg-violet-50/50">
-                                    <div className="flex items-center justify-between">
-                                      <div className="flex items-center gap-2">
-                                        <Sparkles className="w-4 h-4 text-violet-600" />
-                                        <span className="font-semibold text-violet-900">AI Evaluation</span>
-                                      </div>
-                                      <button
-                                        onClick={() => setSelectedShadowingAttempt(null)}
-                                        className="text-xs text-gray-500 hover:text-gray-700"
-                                      >
-                                        Close
-                                      </button>
-                                    </div>
-                                  </div>
-                                  <div className="p-4 space-y-4">
-                                    {/* Similarity Score */}
-                                    <div className="flex items-center gap-4">
-                                      <div className={`w-16 h-16 rounded-full flex items-center justify-center text-xl font-bold ${
-                                        selectedShadowingAttempt.evaluation.similarity_score >= 80
-                                          ? 'bg-emerald-100 text-emerald-700'
-                                          : selectedShadowingAttempt.evaluation.similarity_score >= 60
-                                            ? 'bg-yellow-100 text-yellow-700'
-                                            : 'bg-red-100 text-red-700'
-                                      }`}>
-                                        {selectedShadowingAttempt.evaluation.similarity_score}%
-                                      </div>
-                                      <div>
-                                        <div className="font-medium text-gray-900">Similarity Score</div>
-                                        <div className="text-sm text-gray-500">
-                                          {selectedShadowingAttempt.evaluation.similarity_score >= 80
-                                            ? 'Excellent match!'
-                                            : selectedShadowingAttempt.evaluation.similarity_score >= 60
-                                              ? 'Good attempt, keep practicing!'
-                                              : 'Needs more practice'}
-                                        </div>
-                                      </div>
-                                    </div>
-
-                                    {/* Comparison */}
-                                    <div className="space-y-2">
-                                      <div className="p-3 bg-blue-50 rounded-lg border border-blue-200">
-                                        <div className="text-xs text-blue-600 font-medium mb-1">Target:</div>
-                                        <p className="text-sm text-gray-800">{selectedShadowingAttempt.target_sentence}</p>
-                                      </div>
-                                      <div className="p-3 bg-gray-50 rounded-lg border border-gray-200">
-                                        <div className="text-xs text-gray-500 font-medium mb-1">You said:</div>
-                                        <p className="text-sm text-gray-800">{selectedShadowingAttempt.user_transcript}</p>
-                                      </div>
-                                    </div>
-
-                                    {/* Differences */}
-                                    {selectedShadowingAttempt.evaluation.differences.length > 0 && (
-                                      <div>
-                                        <div className="text-sm font-medium text-gray-700 mb-2">Differences:</div>
-                                        <div className="space-y-1">
-                                          {selectedShadowingAttempt.evaluation.differences.map((diff, i) => (
-                                            <div key={i} className="flex items-center gap-2 text-sm">
-                                              <span className="text-red-600 line-through">{diff.expected}</span>
-                                              <span className="text-gray-400">→</span>
-                                              <span className="text-green-600">{diff.actual}</span>
-                                            </div>
-                                          ))}
-                                        </div>
-                                      </div>
-                                    )}
-
-                                    {/* Feedback */}
-                                    <div className="p-3 bg-amber-50 rounded-lg border border-amber-200">
-                                      <div className="text-xs text-amber-700 font-medium mb-1">Feedback:</div>
-                                      <p className="text-sm text-amber-800">{selectedShadowingAttempt.evaluation.feedback}</p>
-                                    </div>
-
-                                    {/* Audio Playback */}
-                                    {selectedShadowingAttempt.audio_url && (
-                                      <audio controls src={selectedShadowingAttempt.audio_url} className="w-full" />
-                                    )}
-                                  </div>
-                                </motion.div>
-                              )}
-                            </AnimatePresence>
-
-                            {/* Submitting indicator */}
-                            {isSubmittingShadowing && (
-                              <div className="p-3 bg-violet-50 rounded-lg border border-violet-200 flex items-center gap-3">
-                                <motion.div
-                                  animate={{ rotate: 360 }}
-                                  transition={{ duration: 1, repeat: Infinity, ease: 'linear' }}
-                                  className="w-5 h-5 border-2 border-violet-300 border-t-violet-600 rounded-full"
-                                />
-                                <span className="text-sm text-violet-700">Evaluating your pronunciation...</span>
-                              </div>
-                            )}
-
-                            <div className="space-y-3 max-h-[400px] overflow-y-auto pr-2">
-                              {getSentences(analysis.transcript).map((sentence, index) => {
-                                const hasRecording = sentenceRecordings.get(index);
-                                const hasAttempt = shadowingAttempts.get(index);
-                                const isCurrentSentence = currentSentenceIndex === index;
-                                const isRecordingThis = isRecording && isCurrentSentence;
-
-                                // Get score from either local attempt or loaded stats
-                                const scoreFromAttempt = hasAttempt?.evaluation.similarity_score ?? null;
-                                const scoreFromStats = getBestScoreFromStats(index);
-                                const bestScore = scoreFromAttempt ?? scoreFromStats;
-                                const isCompleted = bestScore !== null;
-
-                                return (
-                                  <motion.div
-                                    key={index}
-                                    initial={{ opacity: 0, y: 10 }}
-                                    animate={{ opacity: 1, y: 0 }}
-                                    transition={{ delay: index * 0.03 }}
-                                    className={`p-4 rounded-xl border transition-all ${
-                                      isCurrentSentence && !isCompleted
-                                        ? 'bg-violet-100 border-violet-300 shadow-md'
-                                        : isCompleted
-                                          ? 'bg-emerald-50 border-emerald-200'
-                                          : hasRecording
-                                            ? 'bg-yellow-50 border-yellow-200'
-                                            : 'bg-white border-gray-200'
-                                    }`}
-                                  >
-                                    <div className="flex items-start gap-3">
-                                      <span className={`flex-shrink-0 w-7 h-7 rounded-full text-xs font-medium flex items-center justify-center ${
-                                        isCompleted
-                                          ? 'bg-emerald-200 text-emerald-700'
-                                          : hasRecording
-                                            ? 'bg-yellow-200 text-yellow-700'
-                                            : 'bg-gray-200 text-gray-600'
-                                      }`}>
-                                        {index + 1}
-                                      </span>
-
-                                      <div className="flex-1 min-w-0">
-                                        <p className={`text-sm mb-2 ${isCurrentSentence && !isCompleted ? 'text-violet-900 font-medium' : 'text-gray-700'}`}>
-                                          {sentence}
-                                        </p>
-
-                                        <div className="flex items-center gap-2 flex-wrap">
-                                          {/* Record Button - different states based on sentence status */}
-                                          {isCompleted ? (
-                                            // Already has score from stats - show re-record option
-                                            <motion.button
-                                              whileHover={{ scale: 1.05 }}
-                                              whileTap={{ scale: 0.95 }}
-                                              onClick={() => handleSentenceRecord(index)}
-                                              className="flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-medium bg-emerald-100 text-emerald-700 hover:bg-emerald-200 transition-all"
-                                            >
-                                              <RotateCcw className="w-3 h-3" />
-                                              Re-record
-                                            </motion.button>
-                                          ) : isRecordingThis ? (
-                                            // Currently recording
-                                            <motion.button
-                                              whileHover={{ scale: 1.05 }}
-                                              whileTap={{ scale: 0.95 }}
-                                              onClick={() => handleSentenceRecord(index)}
-                                              className="flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-medium bg-red-500 text-white shadow-red-500/30 shadow-lg"
-                                            >
-                                              <Square className="w-3 h-3 fill-current" />
-                                              Recording {formatDuration(recordingDuration)}
-                                            </motion.button>
-                                          ) : hasRecording ? (
-                                            // Processing
-                                            <span className="flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-medium bg-yellow-100 text-yellow-700">
-                                              <Mic className="w-3 h-3" />
-                                              Processing...
-                                            </span>
-                                          ) : isCurrentSentence ? (
-                                            // Ready to record
-                                            <motion.button
-                                              whileHover={{ scale: 1.05 }}
-                                              whileTap={{ scale: 0.95 }}
-                                              onClick={() => handleSentenceRecord(index)}
-                                              className="flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-medium bg-violet-500 text-white hover:bg-violet-600 shadow-md"
-                                            >
-                                              <Mic className="w-3 h-3" />
-                                              Record
-                                            </motion.button>
-                                          ) : (
-                                            // Not yet available
-                                            <span className="flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-medium bg-gray-100 text-gray-400">
-                                              <Mic className="w-3 h-3" />
-                                              Record
-                                            </span>
-                                          )}
-
-                                          {/* Score Badge - show from stats or local attempt */}
-                                          {bestScore !== null && (
-                                            <motion.button
-                                              whileHover={{ scale: 1.05 }}
-                                              whileTap={{ scale: 0.95 }}
-                                              onClick={() => handleViewShadowingDetail(index)}
-                                              className={`flex items-center gap-2 px-4 py-1.5 rounded-full text-sm font-semibold transition-all ${
-                                                bestScore >= 80
-                                                  ? 'bg-emerald-500 text-white shadow-emerald-500/30 shadow-md'
-                                                  : bestScore >= 60
-                                                    ? 'bg-yellow-500 text-white shadow-yellow-500/30 shadow-md'
-                                                    : 'bg-orange-500 text-white shadow-orange-500/30 shadow-md'
-                                              }`}
-                                            >
-                                              <Sparkles className="w-3 h-3" />
-                                              {bestScore}%
-                                            </motion.button>
-                                          )}
-
-                                          {/* Next sentence indicator - show when current sentence is completed */}
-                                          {isCompleted && isCurrentSentence && (
-                                            <span className="text-xs text-emerald-600 font-medium flex items-center gap-1 animate-pulse">
-                                              <ChevronRight className="w-3 h-3" />
-                                              Continue below ↓
-                                            </span>
-                                          )}
-
-                                          {/* Recording Playback (local while processing) */}
-                                          {hasRecording && !hasAttempt && (
-                                            <div className="flex items-center gap-2">
-                                              <audio
-                                                controls
-                                                src={hasRecording.audioUrl}
-                                                className="h-8 w-32"
-                                              />
-                                              <span className="text-xs text-gray-500">
-                                                {formatDuration(hasRecording.duration)}
-                                              </span>
-                                            </div>
-                                          )}
-                                        </div>
-
-                                        {/* Success message with guidance for completed sentences */}
-                                        {isCompleted && (
-                                          <div className="mt-2 p-2 bg-emerald-50 rounded-lg border border-emerald-100">
-                                            <div className="flex items-center gap-2 text-xs">
-                                              <CheckCircle2 className="w-3 h-3 text-emerald-600" />
-                                              <span className="text-emerald-700">
-                                                {bestScore! >= 80
-                                                  ? 'Excellent! Move to the next sentence ↓'
-                                                  : bestScore! >= 60
-                                                    ? 'Good job! Continue to next or re-record to improve.'
-                                                    : 'Keep practicing! Move to next or try again.'}
-                                              </span>
-                                            </div>
-                                          </div>
-                                        )}
-                                      </div>
-                                    </div>
-                                  </motion.div>
-                                );
-                              })}
-                            </div>
-
-                            {/* Shadowing Progress */}
-                            <div className="mt-4 p-3 bg-gray-100 rounded-lg">
-                              <div className="flex items-center justify-between text-sm mb-2">
-                                <span className="text-gray-600">Progress</span>
-                                <span className="font-medium text-gray-800">
-                                  {shadowingAttempts.size} / {getSentences(analysis.transcript).length} evaluated
-                                </span>
-                              </div>
-                              <div className="w-full h-2 bg-gray-200 rounded-full overflow-hidden">
-                                <motion.div
-                                  className="h-full bg-gradient-to-r from-violet-500 to-purple-600"
-                                  initial={{ width: 0 }}
-                                  animate={{
-                                    width: `${(shadowingAttempts.size / getSentences(analysis.transcript).length) * 100}%`,
-                                  }}
-                                  transition={{ duration: 0.3 }}
-                                />
-                              </div>
-                            </div>
+                          <div className="rounded-xl border border-violet-200 bg-violet-50/70 p-6 text-center">
+                            <Headphones className="mx-auto mb-3 h-10 w-10 text-violet-500" />
+                            <p className="text-sm font-medium text-violet-900">Practice window is open</p>
+                            <p className="mt-2 text-sm text-violet-800/90">
+                              Video and sentences are in the overlay. Scroll the rest of the page freely, or close the window when you are done.
+                            </p>
                           </div>
                         )}
                       </div>
@@ -1374,5 +1061,357 @@ export function YoutubeGem() {
         )}
       </motion.div>
     </div>
+
+    {/* Shadowing: dedicated window — video + transcript scroll together */}
+    <Dialog open={isShadowingMode && !!analysis} onOpenChange={(open) => !open && exitShadowing()}>
+      <DialogContent className="flex h-[min(92vh,880px)] w-[min(96vw,1200px)] max-w-[min(96vw,1200px)] translate-x-[-50%] translate-y-[-50%] flex-col gap-0 overflow-hidden p-0 sm:max-w-[min(96vw,1200px)] [&>button]:top-3">
+        {analysis && (
+          <>
+            <DialogHeader className="shrink-0 space-y-1 border-b bg-background px-4 py-3 pr-12 text-left">
+              <DialogTitle className="flex items-center gap-2 text-base">
+                <Headphones className="h-4 w-4 text-violet-600" />
+                Shadowing practice
+              </DialogTitle>
+              <DialogDescription className="line-clamp-1 text-left">
+                {analysis.video_title}
+              </DialogDescription>
+            </DialogHeader>
+
+            <div className="flex min-h-0 flex-1 flex-col lg:flex-row">
+              {/* Video column — stays visible while transcript scrolls */}
+              {extractVideoId(analysis.video_url) ? (
+                <div className="shrink-0 border-b bg-red-50/40 p-4 lg:w-[min(42%,440px)] lg:border-b-0 lg:border-r">
+                  <div className="mb-2 flex items-center gap-2 text-sm font-medium text-red-900">
+                    <Play className="h-4 w-4" />
+                    Listen along
+                  </div>
+                  <div className="relative aspect-video w-full overflow-hidden rounded-xl bg-black shadow-inner">
+                    <iframe
+                      src={`https://www.youtube.com/embed/${extractVideoId(analysis.video_url)}?rel=0&modestbranding=1`}
+                      title={analysis.video_title}
+                      allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                      allowFullScreen
+                      className="absolute inset-0 h-full w-full"
+                    />
+                  </div>
+                </div>
+              ) : null}
+
+              {/* Transcript & recording — only this side scrolls */}
+              <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-muted/20">
+                <div className="min-h-0 flex-1 overflow-y-auto p-4">
+                  <div className="space-y-4">
+                    {shadowingStats && shadowingStats.total_attempts > 0 && (
+                      <div className="rounded-xl border border-violet-200 bg-gradient-to-r from-violet-50 to-purple-50 p-4">
+                        <div className="mb-3 flex items-center justify-between">
+                          <span className="text-sm font-semibold text-violet-900">Your Progress</span>
+                          <Badge variant="outline" className="border-violet-300 bg-violet-100 text-violet-700">
+                            {shadowingStats.total_attempts} attempts
+                          </Badge>
+                        </div>
+                        <div className="grid grid-cols-3 gap-3 text-center">
+                          <div>
+                            <div className="text-lg font-bold text-violet-700">{shadowingStats.sentences_practiced}</div>
+                            <div className="text-xs text-violet-600">Sentences</div>
+                          </div>
+                          <div>
+                            <div className="text-lg font-bold text-violet-700">
+                              {shadowingStats.average_similarity_score?.toFixed(0) ?? '-'}
+                            </div>
+                            <div className="text-xs text-violet-600">Avg Score</div>
+                          </div>
+                          <div>
+                            <div className="text-lg font-bold text-violet-700">
+                              {shadowingStats.best_similarity_score ?? '-'}
+                            </div>
+                            <div className="text-xs text-violet-600">Best Score</div>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    <div className="rounded-lg border border-violet-200 bg-violet-50 p-3">
+                      <p className="text-sm text-violet-800">
+                        <span className="font-semibold">Shadowing:</span> Play the video on the left, then record each sentence. Mic starts/stops recording.
+                      </p>
+                    </div>
+
+                    {recorderError && (
+                      <div className="rounded-lg border border-red-200 bg-red-50 p-3">
+                        <p className="text-sm text-red-600">{recorderError}</p>
+                      </div>
+                    )}
+
+                    {shadowingError && (
+                      <div className="rounded-lg border border-red-200 bg-red-50 p-3">
+                        <p className="text-sm text-red-600">{shadowingError}</p>
+                      </div>
+                    )}
+
+                    <AnimatePresence>
+                      {selectedShadowingAttempt && (
+                        <motion.div
+                          initial={{ opacity: 0, height: 0 }}
+                          animate={{ opacity: 1, height: 'auto' }}
+                          exit={{ opacity: 0, height: 0 }}
+                          className="overflow-hidden rounded-xl border-2 border-violet-200 bg-white"
+                        >
+                          <div className="border-b border-violet-100 bg-violet-50/50 p-4">
+                            <div className="flex items-center justify-between">
+                              <div className="flex items-center gap-2">
+                                <Sparkles className="h-4 w-4 text-violet-600" />
+                                <span className="font-semibold text-violet-900">AI Evaluation</span>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => setSelectedShadowingAttempt(null)}
+                                className="text-xs text-gray-500 hover:text-gray-700"
+                              >
+                                Close
+                              </button>
+                            </div>
+                          </div>
+                          <div className="space-y-4 p-4">
+                            <div className="flex items-center gap-4">
+                              <div
+                                className={`flex h-16 w-16 items-center justify-center rounded-full text-xl font-bold ${
+                                  selectedShadowingAttempt.evaluation.similarity_score >= 80
+                                    ? 'bg-emerald-100 text-emerald-700'
+                                    : selectedShadowingAttempt.evaluation.similarity_score >= 60
+                                      ? 'bg-yellow-100 text-yellow-700'
+                                      : 'bg-red-100 text-red-700'
+                                }`}
+                              >
+                                {selectedShadowingAttempt.evaluation.similarity_score}%
+                              </div>
+                              <div>
+                                <div className="font-medium text-gray-900">Similarity Score</div>
+                                <div className="text-sm text-gray-500">
+                                  {selectedShadowingAttempt.evaluation.similarity_score >= 80
+                                    ? 'Excellent match!'
+                                    : selectedShadowingAttempt.evaluation.similarity_score >= 60
+                                      ? 'Good attempt, keep practicing!'
+                                      : 'Needs more practice'}
+                                </div>
+                              </div>
+                            </div>
+                            <div className="space-y-2">
+                              <div className="rounded-lg border border-blue-200 bg-blue-50 p-3">
+                                <div className="mb-1 text-xs font-medium text-blue-600">Target:</div>
+                                <p className="text-sm text-gray-800">{selectedShadowingAttempt.target_sentence}</p>
+                              </div>
+                              <div className="rounded-lg border border-gray-200 bg-gray-50 p-3">
+                                <div className="mb-1 text-xs font-medium text-gray-500">You said:</div>
+                                <p className="text-sm text-gray-800">{selectedShadowingAttempt.user_transcript}</p>
+                              </div>
+                            </div>
+                            {selectedShadowingAttempt.evaluation.differences.length > 0 && (
+                              <div>
+                                <div className="mb-2 text-sm font-medium text-gray-700">Differences:</div>
+                                <div className="space-y-1">
+                                  {selectedShadowingAttempt.evaluation.differences.map((diff, i) => (
+                                    <div key={i} className="flex items-center gap-2 text-sm">
+                                      <span className="text-red-600 line-through">{diff.expected}</span>
+                                      <span className="text-gray-400">→</span>
+                                      <span className="text-green-600">{diff.actual}</span>
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+                            <div className="rounded-lg border border-amber-200 bg-amber-50 p-3">
+                              <div className="mb-1 text-xs font-medium text-amber-700">Feedback:</div>
+                              <p className="text-sm text-amber-800">{selectedShadowingAttempt.evaluation.feedback}</p>
+                            </div>
+                            {selectedShadowingAttempt.audio_url && (
+                              <audio controls src={selectedShadowingAttempt.audio_url} className="w-full" />
+                            )}
+                          </div>
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
+
+                    {isSubmittingShadowing && (
+                      <div className="flex items-center gap-3 rounded-lg border border-violet-200 bg-violet-50 p-3">
+                        <motion.div
+                          animate={{ rotate: 360 }}
+                          transition={{ duration: 1, repeat: Infinity, ease: 'linear' }}
+                          className="h-5 w-5 rounded-full border-2 border-violet-300 border-t-violet-600"
+                        />
+                        <span className="text-sm text-violet-700">Evaluating your pronunciation...</span>
+                      </div>
+                    )}
+
+                    <div className="space-y-3">
+                      {getSentences(analysis.transcript).map((sentence, index) => {
+                        const hasRecording = sentenceRecordings.get(index);
+                        const hasAttempt = shadowingAttempts.get(index);
+                        const isCurrentSentence = currentSentenceIndex === index;
+                        const isRecordingThis = isRecording && isCurrentSentence;
+                        const scoreFromAttempt = hasAttempt?.evaluation.similarity_score ?? null;
+                        const scoreFromStats = getBestScoreFromStats(index);
+                        const bestScore = scoreFromAttempt ?? scoreFromStats;
+                        const isCompleted = bestScore !== null;
+
+                        return (
+                          <motion.div
+                            key={index}
+                            initial={{ opacity: 0, y: 10 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            transition={{ delay: index * 0.03 }}
+                            className={`rounded-xl border p-4 transition-all ${
+                              isCurrentSentence && !isCompleted
+                                ? 'border-violet-300 bg-violet-100 shadow-md'
+                                : isCompleted
+                                  ? 'border-emerald-200 bg-emerald-50'
+                                  : hasRecording
+                                    ? 'border-yellow-200 bg-yellow-50'
+                                    : 'border-gray-200 bg-white'
+                            }`}
+                          >
+                            <div className="flex items-start gap-3">
+                              <span
+                                className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-xs font-medium ${
+                                  isCompleted
+                                    ? 'bg-emerald-200 text-emerald-700'
+                                    : hasRecording
+                                      ? 'bg-yellow-200 text-yellow-700'
+                                      : 'bg-gray-200 text-gray-600'
+                                }`}
+                              >
+                                {index + 1}
+                              </span>
+                              <div className="min-w-0 flex-1">
+                                <p
+                                  className={`mb-2 text-sm ${
+                                    isCurrentSentence && !isCompleted ? 'font-medium text-violet-900' : 'text-gray-700'
+                                  }`}
+                                >
+                                  {sentence}
+                                </p>
+                                <div className="flex flex-wrap items-center gap-2">
+                                  {isCompleted ? (
+                                    <motion.button
+                                      whileHover={{ scale: 1.05 }}
+                                      whileTap={{ scale: 0.95 }}
+                                      type="button"
+                                      onClick={() => handleSentenceRecord(index)}
+                                      className="flex items-center gap-2 rounded-full bg-emerald-100 px-3 py-1.5 text-xs font-medium text-emerald-700 transition-all hover:bg-emerald-200"
+                                    >
+                                      <RotateCcw className="h-3 w-3" />
+                                      Re-record
+                                    </motion.button>
+                                  ) : isRecordingThis ? (
+                                    <motion.button
+                                      whileHover={{ scale: 1.05 }}
+                                      whileTap={{ scale: 0.95 }}
+                                      type="button"
+                                      onClick={() => handleSentenceRecord(index)}
+                                      className="flex items-center gap-2 rounded-full bg-red-500 px-3 py-1.5 text-xs font-medium text-white shadow-lg shadow-red-500/30"
+                                    >
+                                      <Square className="h-3 w-3 fill-current" />
+                                      Recording {formatDuration(recordingDuration)}
+                                    </motion.button>
+                                  ) : hasRecording ? (
+                                    <span className="flex items-center gap-2 rounded-full bg-yellow-100 px-3 py-1.5 text-xs font-medium text-yellow-700">
+                                      <Mic className="h-3 w-3" />
+                                      Processing...
+                                    </span>
+                                  ) : isCurrentSentence ? (
+                                    <motion.button
+                                      whileHover={{ scale: 1.05 }}
+                                      whileTap={{ scale: 0.95 }}
+                                      type="button"
+                                      onClick={() => handleSentenceRecord(index)}
+                                      className="flex items-center gap-2 rounded-full bg-violet-500 px-3 py-1.5 text-xs font-medium text-white shadow-md hover:bg-violet-600"
+                                    >
+                                      <Mic className="h-3 w-3" />
+                                      Record
+                                    </motion.button>
+                                  ) : (
+                                    <span className="flex cursor-not-allowed items-center gap-2 rounded-full bg-gray-100 px-3 py-1.5 text-xs font-medium text-gray-400">
+                                      <Mic className="h-3 w-3" />
+                                      Record
+                                    </span>
+                                  )}
+                                  {bestScore !== null && (
+                                    <motion.button
+                                      whileHover={{ scale: 1.05 }}
+                                      whileTap={{ scale: 0.95 }}
+                                      type="button"
+                                      onClick={() => handleViewShadowingDetail(index)}
+                                      className={`flex items-center gap-2 rounded-full px-4 py-1.5 text-sm font-semibold transition-all ${
+                                        bestScore >= 80
+                                          ? 'bg-emerald-500 text-white shadow-md shadow-emerald-500/30'
+                                          : bestScore >= 60
+                                            ? 'bg-yellow-500 text-white shadow-md shadow-yellow-500/30'
+                                            : 'bg-orange-500 text-white shadow-md shadow-orange-500/30'
+                                      }`}
+                                    >
+                                      <Sparkles className="h-3 w-3" />
+                                      {bestScore}%
+                                    </motion.button>
+                                  )}
+                                  {isCompleted && isCurrentSentence && (
+                                    <span className="flex animate-pulse items-center gap-1 text-xs font-medium text-emerald-600">
+                                      <ChevronRight className="h-3 w-3" />
+                                      Continue below ↓
+                                    </span>
+                                  )}
+                                  {hasRecording && !hasAttempt && (
+                                    <div className="flex items-center gap-2">
+                                      <audio controls src={hasRecording.audioUrl} className="h-8 w-32" />
+                                      <span className="text-xs text-gray-500">{formatDuration(hasRecording.duration)}</span>
+                                    </div>
+                                  )}
+                                </div>
+                                {isCompleted && (
+                                  <div className="mt-2 rounded-lg border border-emerald-100 bg-emerald-50 p-2">
+                                    <div className="flex items-center gap-2 text-xs">
+                                      <CheckCircle2 className="h-3 w-3 text-emerald-600" />
+                                      <span className="text-emerald-700">
+                                        {bestScore! >= 80
+                                          ? 'Excellent! Move to the next sentence ↓'
+                                          : bestScore! >= 60
+                                            ? 'Good job! Continue to next or re-record to improve.'
+                                            : 'Keep practicing! Move to next or try again.'}
+                                      </span>
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          </motion.div>
+                        );
+                      })}
+                    </div>
+
+                    <div className="mt-2 rounded-lg bg-gray-100 p-3">
+                      <div className="mb-2 flex items-center justify-between text-sm">
+                        <span className="text-gray-600">Progress</span>
+                        <span className="font-medium text-gray-800">
+                          {shadowingAttempts.size} / {getSentences(analysis.transcript).length} evaluated
+                        </span>
+                      </div>
+                      <div className="h-2 w-full overflow-hidden rounded-full bg-gray-200">
+                        <motion.div
+                          className="h-full bg-gradient-to-r from-violet-500 to-purple-600"
+                          initial={{ width: 0 }}
+                          animate={{
+                            width: `${(shadowingAttempts.size / getSentences(analysis.transcript).length) * 100}%`,
+                          }}
+                          transition={{ duration: 0.3 }}
+                        />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </>
+        )}
+      </DialogContent>
+    </Dialog>
+    </>
   );
 }
