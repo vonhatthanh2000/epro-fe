@@ -147,6 +147,15 @@ export async function apiFetch(path: string, init: RequestInit = {}): Promise<Re
   return fetch(apiUrl(path), { ...init, headers });
 }
 
+// ==================== YouTube analysis (timed transcript / shadowing) ====================
+
+/** One timed sentence line from `GET/POST` YouTube analysis (`transcript_segments`). */
+export type TranscriptSegment = {
+  text: string;
+  start_time: number;
+  end_time: number;
+};
+
 // ==================== Shadowing API Types ====================
 
 export interface WordDifference {

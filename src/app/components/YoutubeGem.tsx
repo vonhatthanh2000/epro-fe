@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Badge } from './ui/badge';
@@ -43,6 +43,7 @@ import {
   type ShadowingAttemptResponse,
   type ShadowingStatsResponse,
   getShadowingStats,
+  type TranscriptSegment,
 } from '../../config/api';
 import { useProfile } from '../context/ProfileContext';
 import { useAudioRecorder } from '../hooks/useAudioRecorder';
@@ -71,6 +72,8 @@ interface YoutubeAnalysis {
   video_title: string;
   video_url: string;
   transcript: string;
+  /** Ordered timed lines for shadowing / seek; empty → fall back to splitting `transcript`. */
+  transcript_segments: TranscriptSegment[];
   useful_sentences: UsefulSentence[];
   grammar_patterns: GrammarPattern[];
   everyday_phrases: EverydayPhrase[];
@@ -201,6 +204,65 @@ function TranscriptWithHighlights({
   );
 }
 
+function parseTranscriptSegments(raw: unknown): TranscriptSegment[] {
+  if (!Array.isArray(raw)) return [];
+  const out: TranscriptSegment[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== 'object') continue;
+    const o = item as Record<string, unknown>;
+    const text = String(o.text ?? '').trim();
+    if (!text) continue;
+    const start = Number(o.start_time);
+    const end = Number(o.end_time);
+    if (!Number.isFinite(start) || !Number.isFinite(end)) continue;
+    out.push({ text, start_time: start, end_time: end });
+  }
+  return out;
+}
+
+/** Fallback when `transcript_segments` is empty: split plain transcript (no seek times). */
+function splitTranscriptIntoSentences(transcript: string): string[] {
+  return transcript
+    .replace(/([.!?])(\s+)(?=[A-Z])/g, '$1\n')
+    .split('\n')
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
+}
+
+type ShadowingLine = {
+  text: string;
+  startTime: number | null;
+  endTime: number | null;
+};
+
+/** Lines for shadowing: API segments when present, else heuristic split of `transcript`. */
+function buildShadowingPlan(analysis: YoutubeAnalysis): ShadowingLine[] {
+  if (analysis.transcript_segments.length > 0) {
+    return analysis.transcript_segments.map((s) => ({
+      text: s.text,
+      startTime: s.start_time,
+      endTime: s.end_time,
+    }));
+  }
+  return splitTranscriptIntoSentences(analysis.transcript).map((text) => ({
+    text,
+    startTime: null,
+    endTime: null,
+  }));
+}
+
+function extractVideoId(url: string): string | null {
+  const patterns = [
+    /(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/)([^&\s?]+)/,
+    /youtube\.com\/shorts\/([^&\s?]+)/,
+  ];
+  for (const pattern of patterns) {
+    const match = url.match(pattern);
+    if (match?.[1]) return match[1];
+  }
+  return null;
+}
+
 function parseYoutubeAnalysis(data: Record<string, unknown>): YoutubeAnalysis {
   // Try multiple possible ID field names from backend
   const id = String(
@@ -216,6 +278,7 @@ function parseYoutubeAnalysis(data: Record<string, unknown>): YoutubeAnalysis {
     video_title: String(data.video_title ?? ''),
     video_url: String(data.video_url ?? ''),
     transcript: String(data.transcript ?? ''),
+    transcript_segments: parseTranscriptSegments(data.transcript_segments),
     useful_sentences: Array.isArray(data.useful_sentences)
       ? data.useful_sentences.map((s): UsefulSentence => {
           const item = s as Record<string, unknown>;
@@ -486,32 +549,50 @@ export function YoutubeGem() {
     return youtubeRegex.test(url);
   };
 
-  // Extract YouTube video ID from URL
-  const extractVideoId = (url: string): string | null => {
-    const patterns = [
-      /(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/)([^&\s?]+)/,
-      /youtube\.com\/shorts\/([^&\s?]+)/,
-    ];
-    for (const pattern of patterns) {
-      const match = url.match(pattern);
-      if (match && match[1]) {
-        return match[1];
+  const shadowingPlan = useMemo(
+    () => (analysis ? buildShadowingPlan(analysis) : []),
+    [analysis]
+  );
+
+  const shadowingVideoEmbedSrc = useMemo(() => {
+    if (!analysis) return '';
+    const vid = extractVideoId(analysis.video_url);
+    if (!vid) return '';
+    const line = shadowingPlan[currentSentenceIndex];
+    const params = new URLSearchParams({ rel: '0', modestbranding: '1' });
+    if (
+      line &&
+      line.startTime != null &&
+      Number.isFinite(line.startTime) &&
+      line.startTime >= 0
+    ) {
+      params.set('start', String(Math.floor(line.startTime)));
+      if (
+        line.endTime != null &&
+        Number.isFinite(line.endTime) &&
+        line.endTime > line.startTime
+      ) {
+        params.set('end', String(Math.ceil(line.endTime)));
       }
     }
-    return null;
-  };
+    return `https://www.youtube.com/embed/${vid}?${params.toString()}`;
+  }, [analysis, shadowingPlan, currentSentenceIndex]);
 
-  // Split transcript into sentences for shadowing
-  const getSentences = (transcript: string): string[] => {
-    // Split by sentence endings (. ! ?) followed by space or end of string
-    // Keep the punctuation
-    const sentences = transcript
-      .replace(/([.!?])(\s+)(?=[A-Z])/g, '$1\n')
-      .split('\n')
-      .map((s) => s.trim())
-      .filter((s) => s.length > 0);
-    return sentences;
-  };
+  /** Sentences with a stored score: from API stats and/or in-memory attempts (stats alone after reload). */
+  const shadowingProgressCounts = useMemo(() => {
+    if (!analysis) return { total: 0, evaluated: 0 };
+    const total = shadowingPlan.length;
+    if (total === 0) return { total: 0, evaluated: 0 };
+    const indices = new Set<number>();
+    shadowingStats?.progress_by_sentence.forEach((p) => {
+      const i = p.sentence_index;
+      if (typeof i === 'number' && Number.isFinite(i) && i >= 0 && i < total) indices.add(i);
+    });
+    shadowingAttempts.forEach((_, idx) => {
+      if (idx >= 0 && idx < total) indices.add(idx);
+    });
+    return { total, evaluated: indices.size };
+  }, [analysis, shadowingStats, shadowingAttempts, shadowingPlan]);
 
   const loadShadowingStats = useCallback(async () => {
     if (!analysis) return;
@@ -566,8 +647,12 @@ export function YoutubeGem() {
         setShadowingError(null);
 
         try {
-          const sentences = getSentences(analysis.transcript);
-          const targetSentence = sentences[sentenceIndex];
+          const line = shadowingPlan[sentenceIndex];
+          if (!line) {
+            setShadowingError('This sentence is not available for shadowing.');
+            return;
+          }
+          const targetSentence = line.text;
 
           const attempt = await submitShadowingAttempt(
             audioFile,
@@ -593,13 +678,13 @@ export function YoutubeGem() {
         }
 
         // Move to next sentence if available
-        const sentences = analysis ? getSentences(analysis.transcript) : [];
-        if (sentenceIndex < sentences.length - 1) {
+        if (sentenceIndex < shadowingPlan.length - 1) {
           setCurrentSentenceIndex(sentenceIndex + 1);
         }
       }
     } else {
-      // Start recording
+      // Align "current" row with the sentence being recorded (fixes Re-record when focus was on next sentence)
+      setCurrentSentenceIndex(sentenceIndex);
       setShadowingError(null);
       await startRecording();
     }
@@ -615,19 +700,19 @@ export function YoutubeGem() {
   // Auto-set current sentence to the next unrecorded one when stats load
   useEffect(() => {
     if (isShadowingMode && shadowingStats && analysis) {
-      const sentences = getSentences(analysis.transcript);
+      const plan = buildShadowingPlan(analysis);
       const recordedIndices = new Set(
         shadowingStats.progress_by_sentence.map(p => p.sentence_index)
       );
 
       // Find first sentence that hasn't been recorded
-      const nextIndex = sentences.findIndex((_, idx) => !recordedIndices.has(idx));
+      const nextIndex = plan.findIndex((_, idx) => !recordedIndices.has(idx));
 
       if (nextIndex !== -1) {
         setCurrentSentenceIndex(nextIndex);
-      } else if (sentences.length > 0) {
+      } else if (plan.length > 0) {
         // All recorded, go to last sentence
-        setCurrentSentenceIndex(sentences.length - 1);
+        setCurrentSentenceIndex(plan.length - 1);
       }
     }
   }, [isShadowingMode, shadowingStats, analysis]);
@@ -1080,13 +1165,21 @@ export function YoutubeGem() {
               {/* Video column — stays visible while transcript scrolls */}
               {extractVideoId(analysis.video_url) ? (
                 <div className="shrink-0 border-b bg-red-50/40 p-4 lg:w-[min(42%,440px)] lg:border-b-0 lg:border-r">
-                  <div className="mb-2 flex items-center gap-2 text-sm font-medium text-red-900">
-                    <Play className="h-4 w-4" />
-                    Listen along
+                  <div className="mb-2 flex flex-col gap-1 text-sm font-medium text-red-900">
+                    <div className="flex items-center gap-2">
+                      <Play className="h-4 w-4" />
+                      Listen along
+                    </div>
+                    {analysis.transcript_segments.length > 0 && (
+                      <p className="text-xs font-normal text-red-800/90">
+                        Video jumps to the timed window for the sentence you are on (current row).
+                      </p>
+                    )}
                   </div>
                   <div className="relative aspect-video w-full overflow-hidden rounded-xl bg-black shadow-inner">
                     <iframe
-                      src={`https://www.youtube.com/embed/${extractVideoId(analysis.video_url)}?rel=0&modestbranding=1`}
+                      key={shadowingVideoEmbedSrc}
+                      src={shadowingVideoEmbedSrc}
                       title={analysis.video_title}
                       allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
                       allowFullScreen
@@ -1148,7 +1241,8 @@ export function YoutubeGem() {
                     )}
 
                     <div className="space-y-3">
-                      {getSentences(analysis.transcript).map((sentence, index) => {
+                      {shadowingPlan.map((line, index) => {
+                        const sentence = line.text;
                         const hasRecording = sentenceRecordings.get(index);
                         const hasAttempt = shadowingAttempts.get(index);
                         const isCurrentSentence = currentSentenceIndex === index;
@@ -1165,13 +1259,15 @@ export function YoutubeGem() {
                             animate={{ opacity: 1, y: 0 }}
                             transition={{ delay: index * 0.03 }}
                             className={`rounded-xl border p-4 transition-all ${
-                              isCurrentSentence && !isCompleted
-                                ? 'border-violet-300 bg-violet-100 shadow-md'
-                                : isCompleted
-                                  ? 'border-emerald-200 bg-emerald-50'
-                                  : hasRecording
-                                    ? 'border-yellow-200 bg-yellow-50'
-                                    : 'border-gray-200 bg-white'
+                              isRecordingThis
+                                ? 'border-red-300 bg-red-50/60 shadow-md ring-1 ring-red-200'
+                                : isCurrentSentence && !isCompleted
+                                  ? 'border-violet-300 bg-violet-100 shadow-md'
+                                  : isCompleted
+                                    ? 'border-emerald-200 bg-emerald-50'
+                                    : hasRecording
+                                      ? 'border-yellow-200 bg-yellow-50'
+                                      : 'border-gray-200 bg-white'
                             }`}
                           >
                             <div className="flex items-start gap-3">
@@ -1188,34 +1284,74 @@ export function YoutubeGem() {
                               </span>
                               <div className="min-w-0 flex-1">
                                 <p
+                                  role={isCompleted && !isRecordingThis ? 'button' : undefined}
+                                  tabIndex={isCompleted && !isRecordingThis ? 0 : undefined}
+                                  onClick={
+                                    isCompleted &&
+                                    submittingSentenceIndex !== index &&
+                                    !isRecordingThis
+                                      ? () => {
+                                          if (evaluationExpandedIndex === index) {
+                                            setEvaluationExpandedIndex(null);
+                                          } else {
+                                            void handleViewShadowingDetail(index);
+                                          }
+                                        }
+                                      : undefined
+                                  }
+                                  onKeyDown={
+                                    isCompleted &&
+                                    submittingSentenceIndex !== index &&
+                                    !isRecordingThis
+                                      ? (e) => {
+                                          if (e.key === 'Enter' || e.key === ' ') {
+                                            e.preventDefault();
+                                            if (evaluationExpandedIndex === index) {
+                                              setEvaluationExpandedIndex(null);
+                                            } else {
+                                              void handleViewShadowingDetail(index);
+                                            }
+                                          }
+                                        }
+                                      : undefined
+                                  }
                                   className={`mb-2 text-sm ${
                                     isCurrentSentence && !isCompleted ? 'font-medium text-violet-900' : 'text-gray-700'
+                                  } ${
+                                    isCompleted &&
+                                    submittingSentenceIndex !== index &&
+                                    !isRecordingThis
+                                      ? 'cursor-pointer rounded-md px-1 -mx-1 py-0.5 transition-colors hover:bg-violet-100/80 focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-400'
+                                      : ''
                                   }`}
                                 >
                                   {sentence}
                                 </p>
+                                {line.startTime != null &&
+                                  line.endTime != null &&
+                                  Number.isFinite(line.startTime) &&
+                                  Number.isFinite(line.endTime) && (
+                                    <p className="mb-2 flex items-center gap-1.5 text-xs tabular-nums text-gray-500">
+                                      <Clock className="h-3 w-3 shrink-0" aria-hidden />
+                                      <span>
+                                        In video: {line.startTime.toFixed(1)}s – {line.endTime.toFixed(1)}s
+                                      </span>
+                                    </p>
+                                  )}
                                 <div className="flex flex-wrap items-center gap-2">
-                                  {isCompleted ? (
+                                  {isRecordingThis ? (
                                     <motion.button
                                       whileHover={{ scale: 1.05 }}
                                       whileTap={{ scale: 0.95 }}
                                       type="button"
-                                      onClick={() => handleSentenceRecord(index)}
-                                      className="flex items-center gap-2 rounded-full bg-emerald-100 px-3 py-1.5 text-xs font-medium text-emerald-700 transition-all hover:bg-emerald-200"
-                                    >
-                                      <RotateCcw className="h-3 w-3" />
-                                      Re-record
-                                    </motion.button>
-                                  ) : isRecordingThis ? (
-                                    <motion.button
-                                      whileHover={{ scale: 1.05 }}
-                                      whileTap={{ scale: 0.95 }}
-                                      type="button"
-                                      onClick={() => handleSentenceRecord(index)}
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        void handleSentenceRecord(index);
+                                      }}
                                       className="flex items-center gap-2 rounded-full bg-red-500 px-3 py-1.5 text-xs font-medium text-white shadow-lg shadow-red-500/30"
                                     >
                                       <Square className="h-3 w-3 fill-current" />
-                                      Recording {formatDuration(recordingDuration)}
+                                      Stop & analyze {formatDuration(recordingDuration)}
                                     </motion.button>
                                   ) : submittingSentenceIndex === index ? (
                                     <span className="flex items-center gap-2 rounded-full bg-yellow-100 px-3 py-1.5 text-xs font-medium text-yellow-700">
@@ -1226,12 +1362,29 @@ export function YoutubeGem() {
                                       />
                                       Evaluating…
                                     </span>
+                                  ) : isCompleted ? (
+                                    <motion.button
+                                      whileHover={{ scale: 1.05 }}
+                                      whileTap={{ scale: 0.95 }}
+                                      type="button"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        void handleSentenceRecord(index);
+                                      }}
+                                      className="flex items-center gap-2 rounded-full bg-emerald-100 px-3 py-1.5 text-xs font-medium text-emerald-700 transition-all hover:bg-emerald-200"
+                                    >
+                                      <RotateCcw className="h-3 w-3" />
+                                      Re-record
+                                    </motion.button>
                                   ) : isCurrentSentence ? (
                                     <motion.button
                                       whileHover={{ scale: 1.05 }}
                                       whileTap={{ scale: 0.95 }}
                                       type="button"
-                                      onClick={() => handleSentenceRecord(index)}
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        void handleSentenceRecord(index);
+                                      }}
                                       className="flex items-center gap-2 rounded-full bg-violet-500 px-3 py-1.5 text-xs font-medium text-white shadow-md hover:bg-violet-600"
                                     >
                                       <Mic className="h-3 w-3" />
@@ -1248,7 +1401,10 @@ export function YoutubeGem() {
                                       whileHover={{ scale: 1.05 }}
                                       whileTap={{ scale: 0.95 }}
                                       type="button"
-                                      onClick={() => handleViewShadowingDetail(index)}
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        void handleViewShadowingDetail(index);
+                                      }}
                                       className={`flex items-center gap-2 rounded-full px-4 py-1.5 text-sm font-semibold transition-all ${
                                         bestScore >= 80
                                           ? 'bg-emerald-500 text-white shadow-md shadow-emerald-500/30'
@@ -1261,7 +1417,7 @@ export function YoutubeGem() {
                                       {bestScore}%
                                     </motion.button>
                                   )}
-                                  {isCompleted && isCurrentSentence && (
+                                  {isCompleted && isCurrentSentence && !isRecordingThis && (
                                     <span className="flex animate-pulse items-center gap-1 text-xs font-medium text-emerald-600">
                                       <ChevronRight className="h-3 w-3" />
                                       Continue below ↓
@@ -1274,7 +1430,7 @@ export function YoutubeGem() {
                                     </div>
                                   )}
                                 </div>
-                                {isCompleted && (
+                                {isCompleted && !isRecordingThis && (
                                   <div className="mt-2 rounded-lg border border-emerald-100 bg-emerald-50 p-2">
                                     <div className="flex items-center gap-2 text-xs">
                                       <CheckCircle2 className="h-3 w-3 text-emerald-600" />
@@ -1286,6 +1442,14 @@ export function YoutubeGem() {
                                             : 'Keep practicing! Move to next or try again.'}
                                       </span>
                                     </div>
+                                  </div>
+                                )}
+                                {isRecordingThis && (
+                                  <div className="mt-2 rounded-lg border border-red-200 bg-red-50 p-2">
+                                    <p className="text-xs font-medium text-red-800">
+                                      When you are done speaking, press <span className="font-semibold">Stop & analyze</span>{' '}
+                                      above to submit and get your score.
+                                    </p>
                                   </div>
                                 )}
 
@@ -1380,7 +1544,7 @@ export function YoutubeGem() {
                       <div className="mb-2 flex items-center justify-between text-sm">
                         <span className="text-gray-600">Progress</span>
                         <span className="font-medium text-gray-800">
-                          {shadowingAttempts.size} / {getSentences(analysis.transcript).length} evaluated
+                          {shadowingProgressCounts.evaluated} / {shadowingProgressCounts.total} evaluated
                         </span>
                       </div>
                       <div className="h-2 w-full overflow-hidden rounded-full bg-gray-200">
@@ -1388,7 +1552,11 @@ export function YoutubeGem() {
                           className="h-full bg-gradient-to-r from-violet-500 to-purple-600"
                           initial={{ width: 0 }}
                           animate={{
-                            width: `${(shadowingAttempts.size / getSentences(analysis.transcript).length) * 100}%`,
+                            width: `${
+                              shadowingProgressCounts.total > 0
+                                ? (shadowingProgressCounts.evaluated / shadowingProgressCounts.total) * 100
+                                : 0
+                            }%`,
                           }}
                           transition={{ duration: 0.3 }}
                         />
