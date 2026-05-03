@@ -676,11 +676,6 @@ export function YoutubeGem() {
         } finally {
           setSubmittingSentenceIndex(null);
         }
-
-        // Move to next sentence if available
-        if (sentenceIndex < shadowingPlan.length - 1) {
-          setCurrentSentenceIndex(sentenceIndex + 1);
-        }
       }
     } else {
       // Align "current" row with the sentence being recorded (fixes Re-record when focus was on next sentence)
@@ -697,25 +692,15 @@ export function YoutubeGem() {
     }
   }, [isShadowingMode, analysis, loadShadowingStats]);
 
-  // Auto-set current sentence to the next unrecorded one when stats load
-  useEffect(() => {
-    if (isShadowingMode && shadowingStats && analysis) {
-      const plan = buildShadowingPlan(analysis);
-      const recordedIndices = new Set(
-        shadowingStats.progress_by_sentence.map(p => p.sentence_index)
-      );
-
-      // Find first sentence that hasn't been recorded
-      const nextIndex = plan.findIndex((_, idx) => !recordedIndices.has(idx));
-
-      if (nextIndex !== -1) {
-        setCurrentSentenceIndex(nextIndex);
-      } else if (plan.length > 0) {
-        // All recorded, go to last sentence
-        setCurrentSentenceIndex(plan.length - 1);
-      }
-    }
-  }, [isShadowingMode, shadowingStats, analysis]);
+  /** Focus a line for video seek (timed segments) + highlight; does not start recording. */
+  const focusShadowingSentence = useCallback(
+    (index: number) => {
+      if (isRecording) return;
+      setCurrentSentenceIndex(index);
+      setEvaluationExpandedIndex((e) => (e === index ? e : null));
+    },
+    [isRecording]
+  );
 
   // Helper to get best score from stats for a sentence
   const getBestScoreFromStats = (sentenceIndex: number): number | null => {
@@ -1172,7 +1157,7 @@ export function YoutubeGem() {
                     </div>
                     {analysis.transcript_segments.length > 0 && (
                       <p className="text-xs font-normal text-red-800/90">
-                        Video jumps to the timed window for the sentence you are on (current row).
+                        Video follows the sentence you click or the row you are recording.
                       </p>
                     )}
                   </div>
@@ -1224,7 +1209,7 @@ export function YoutubeGem() {
 
                     <div className="rounded-lg border border-violet-200 bg-violet-50 p-3">
                       <p className="text-sm text-violet-800">
-                        <span className="font-semibold">Shadowing:</span> Play the video on the left, then record each sentence. Mic starts/stops recording.
+                        <span className="font-semibold">Shadowing:</span> Click a sentence to hear that part in the video. Record <span className="font-medium">any</span> line in any order — mic starts/stops on the row you press. After a line is scored, use the <span className="font-medium">%</span> chip to open AI feedback.
                       </p>
                     </div>
 
@@ -1262,12 +1247,14 @@ export function YoutubeGem() {
                               isRecordingThis
                                 ? 'border-red-300 bg-red-50/60 shadow-md ring-1 ring-red-200'
                                 : isCurrentSentence && !isCompleted
-                                  ? 'border-violet-300 bg-violet-100 shadow-md'
-                                  : isCompleted
-                                    ? 'border-emerald-200 bg-emerald-50'
-                                    : hasRecording
-                                      ? 'border-yellow-200 bg-yellow-50'
-                                      : 'border-gray-200 bg-white'
+                                  ? 'border-violet-300 bg-violet-100 shadow-md ring-2 ring-violet-300/50'
+                                  : isCurrentSentence && isCompleted
+                                    ? 'border-emerald-200 bg-emerald-50 ring-2 ring-violet-400/45'
+                                    : isCompleted
+                                      ? 'border-emerald-200 bg-emerald-50'
+                                      : hasRecording
+                                        ? 'border-yellow-200 bg-yellow-50'
+                                        : 'border-gray-200 bg-white'
                             }`}
                           >
                             <div className="flex items-start gap-3">
@@ -1284,33 +1271,19 @@ export function YoutubeGem() {
                               </span>
                               <div className="min-w-0 flex-1">
                                 <p
-                                  role={isCompleted && !isRecordingThis ? 'button' : undefined}
-                                  tabIndex={isCompleted && !isRecordingThis ? 0 : undefined}
+                                  role={!isRecordingThis && !isRecording ? 'button' : undefined}
+                                  tabIndex={!isRecordingThis && !isRecording ? 0 : undefined}
                                   onClick={
-                                    isCompleted &&
-                                    submittingSentenceIndex !== index &&
-                                    !isRecordingThis
-                                      ? () => {
-                                          if (evaluationExpandedIndex === index) {
-                                            setEvaluationExpandedIndex(null);
-                                          } else {
-                                            void handleViewShadowingDetail(index);
-                                          }
-                                        }
+                                    !isRecordingThis && !isRecording && submittingSentenceIndex !== index
+                                      ? () => focusShadowingSentence(index)
                                       : undefined
                                   }
                                   onKeyDown={
-                                    isCompleted &&
-                                    submittingSentenceIndex !== index &&
-                                    !isRecordingThis
+                                    !isRecordingThis && !isRecording && submittingSentenceIndex !== index
                                       ? (e) => {
                                           if (e.key === 'Enter' || e.key === ' ') {
                                             e.preventDefault();
-                                            if (evaluationExpandedIndex === index) {
-                                              setEvaluationExpandedIndex(null);
-                                            } else {
-                                              void handleViewShadowingDetail(index);
-                                            }
+                                            focusShadowingSentence(index);
                                           }
                                         }
                                       : undefined
@@ -1318,9 +1291,7 @@ export function YoutubeGem() {
                                   className={`mb-2 text-sm ${
                                     isCurrentSentence && !isCompleted ? 'font-medium text-violet-900' : 'text-gray-700'
                                   } ${
-                                    isCompleted &&
-                                    submittingSentenceIndex !== index &&
-                                    !isRecordingThis
+                                    !isRecordingThis && !isRecording && submittingSentenceIndex !== index
                                       ? 'cursor-pointer rounded-md px-1 -mx-1 py-0.5 transition-colors hover:bg-violet-100/80 focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-400'
                                       : ''
                                   }`}
@@ -1376,7 +1347,15 @@ export function YoutubeGem() {
                                       <RotateCcw className="h-3 w-3" />
                                       Re-record
                                     </motion.button>
-                                  ) : isCurrentSentence ? (
+                                  ) : isRecording && !isRecordingThis ? (
+                                    <span
+                                      className="flex cursor-not-allowed items-center gap-2 rounded-full bg-gray-100 px-3 py-1.5 text-xs font-medium text-gray-400"
+                                      title="Stop recording on the other sentence first"
+                                    >
+                                      <Mic className="h-3 w-3" />
+                                      Recording elsewhere…
+                                    </span>
+                                  ) : (
                                     <motion.button
                                       whileHover={{ scale: 1.05 }}
                                       whileTap={{ scale: 0.95 }}
@@ -1390,11 +1369,6 @@ export function YoutubeGem() {
                                       <Mic className="h-3 w-3" />
                                       Record
                                     </motion.button>
-                                  ) : (
-                                    <span className="flex cursor-not-allowed items-center gap-2 rounded-full bg-gray-100 px-3 py-1.5 text-xs font-medium text-gray-400">
-                                      <Mic className="h-3 w-3" />
-                                      Record
-                                    </span>
                                   )}
                                   {bestScore !== null && (
                                     <motion.button
