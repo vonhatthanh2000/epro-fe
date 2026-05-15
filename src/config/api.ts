@@ -156,6 +156,8 @@ export type TranscriptSegment = {
   end_time: number;
 };
 
+// ==================== Shadowing API (UI disabled in YoutubeGem — keep for re-enable) ====================
+
 // ==================== Shadowing API Types ====================
 
 export interface WordDifference {

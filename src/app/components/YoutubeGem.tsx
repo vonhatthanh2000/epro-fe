@@ -48,6 +48,12 @@ import {
 import { useProfile } from '../context/ProfileContext';
 import { useAudioRecorder } from '../hooks/useAudioRecorder';
 
+/**
+ * Shadowing practice (record sentences against the video, timed segments, progress).
+ * Disabled in the UI — set to `true` to show the Shadowing button and practice dialog again.
+ */
+const SHADOWING_ENABLED = false;
+
 interface UsefulSentence {
   sentence: string;
   why_useful: string;
@@ -371,20 +377,16 @@ export function YoutubeGem() {
 
   const [showTranscript, setShowTranscript] = useState(false);
   const [showEmbed, setShowEmbed] = useState(false);
+
+  /* ---------- Shadowing (disabled while SHADOWING_ENABLED is false) ---------- */
   const [isShadowingMode, setIsShadowingMode] = useState(false);
   const [currentSentenceIndex, setCurrentSentenceIndex] = useState(0);
   const [sentenceRecordings, setSentenceRecordings] = useState<Map<number, { audioUrl: string; duration: number }>>(new Map());
   const [shadowingError, setShadowingError] = useState<string | null>(null);
-
-  // Shadowing API integration state
   const [shadowingAttempts, setShadowingAttempts] = useState<Map<number, ShadowingAttemptResponse>>(new Map());
   const [shadowingStats, setShadowingStats] = useState<ShadowingStatsResponse | null>(null);
-  /** Sentence index currently being evaluated (upload + API), or null */
   const [submittingSentenceIndex, setSubmittingSentenceIndex] = useState<number | null>(null);
-  /** Which sentence row shows the expanded AI evaluation panel */
   const [evaluationExpandedIndex, setEvaluationExpandedIndex] = useState<number | null>(null);
-
-  // Audio recorder for shadowing
   const {
     isRecording,
     duration: recordingDuration,
@@ -685,9 +687,8 @@ export function YoutubeGem() {
     }
   };
 
-  // Load stats when entering shadowing mode or when analysis changes
   useEffect(() => {
-    if (isShadowingMode && analysis) {
+    if (SHADOWING_ENABLED && isShadowingMode && analysis) {
       void loadShadowingStats();
     }
   }, [isShadowingMode, analysis, loadShadowingStats]);
@@ -909,8 +910,7 @@ export function YoutubeGem() {
               </div>
             </div>
 
-            {/* YouTube Embed (hidden in shadowing — player is in left column) */}
-            {extractVideoId(analysis.video_url) && !isShadowingMode && (
+            {extractVideoId(analysis.video_url) && (!SHADOWING_ENABLED || !isShadowingMode) && (
               <div>
                 <button
                   onClick={() => setShowEmbed(!showEmbed)}
@@ -1049,7 +1049,6 @@ export function YoutubeGem() {
               </div>
             )}
 
-            {/* Transcript with Shadowing */}
             {analysis.transcript && (
               <div>
                 <div className="flex items-center justify-between p-3 bg-gray-100 rounded-xl mb-2">
@@ -1071,20 +1070,21 @@ export function YoutubeGem() {
                     )}
                   </button>
 
-                  {/* Shadowing Mode Toggle */}
-                  <Button
-                    onClick={handleShadowingToggle}
-                    variant={isShadowingMode ? 'default' : 'outline'}
-                    size="sm"
-                    className={`ml-2 gap-2 ${
-                      isShadowingMode
-                        ? 'bg-gradient-to-r from-violet-500 to-purple-600 hover:from-violet-600 hover:to-purple-700'
-                        : 'border-violet-200 text-violet-700 hover:bg-violet-50'
-                    }`}
-                  >
-                    <Headphones className="w-4 h-4" />
-                    {isShadowingMode ? 'Exit Shadowing' : 'Shadowing'}
-                  </Button>
+                  {SHADOWING_ENABLED && (
+                    <Button
+                      onClick={handleShadowingToggle}
+                      variant={isShadowingMode ? 'default' : 'outline'}
+                      size="sm"
+                      className={`ml-2 gap-2 ${
+                        isShadowingMode
+                          ? 'bg-gradient-to-r from-violet-500 to-purple-600 hover:from-violet-600 hover:to-purple-700'
+                          : 'border-violet-200 text-violet-700 hover:bg-violet-50'
+                      }`}
+                    >
+                      <Headphones className="w-4 h-4" />
+                      {isShadowingMode ? 'Exit Shadowing' : 'Shadowing'}
+                    </Button>
+                  )}
                 </div>
 
                 <AnimatePresence>
@@ -1096,20 +1096,10 @@ export function YoutubeGem() {
                       className="overflow-hidden"
                     >
                       <div className="mt-2 p-4 bg-gray-50 rounded-xl border border-gray-200">
-                        {!isShadowingMode ? (
-                          <TranscriptWithHighlights
-                            transcript={analysis.transcript}
-                            usefulSentences={analysis.useful_sentences}
-                          />
-                        ) : (
-                          <div className="rounded-xl border border-violet-200 bg-violet-50/70 p-6 text-center">
-                            <Headphones className="mx-auto mb-3 h-10 w-10 text-violet-500" />
-                            <p className="text-sm font-medium text-violet-900">Practice window is open</p>
-                            <p className="mt-2 text-sm text-violet-800/90">
-                              Video and sentences are in the overlay. Scroll the rest of the page freely, or close the window when you are done.
-                            </p>
-                          </div>
-                        )}
+                        <TranscriptWithHighlights
+                          transcript={analysis.transcript}
+                          usefulSentences={analysis.useful_sentences}
+                        />
                       </div>
                     </motion.div>
                   )}
@@ -1131,7 +1121,7 @@ export function YoutubeGem() {
       </motion.div>
     </div>
 
-    {/* Shadowing: dedicated window — video + transcript scroll together */}
+    {SHADOWING_ENABLED && (
     <Dialog open={isShadowingMode && !!analysis} onOpenChange={(open) => !open && exitShadowing()}>
       <DialogContent className="flex h-[min(92vh,880px)] w-[min(96vw,1200px)] max-w-[min(96vw,1200px)] translate-x-[-50%] translate-y-[-50%] flex-col gap-0 overflow-hidden p-0 sm:max-w-[min(96vw,1200px)] [&>button]:top-3">
         {analysis && (
@@ -1544,6 +1534,7 @@ export function YoutubeGem() {
         )}
       </DialogContent>
     </Dialog>
+    )}
     </>
   );
 }
